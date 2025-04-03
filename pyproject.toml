@@ -1,0 +1,17 @@
+[project]
+name = "cloudome"
+version = "0.1.0"
+description = "Add your description here"
+readme = "README.md"
+requires-python = ">=3.11"
+dependencies = [
+    "boto3>=1.37.24",
+    "cloud-volume>=12.1.0",
+    "connected-components-3d>=3.23.0",
+    "flask>=3.1.0",
+    "intern>=1.4.1",
+    "numpy>=2.2.4",
+    "setuptools==74.1.2",
+    "tqdm>=4.67.1",
+    "zappa>=0.59.0",
+]
