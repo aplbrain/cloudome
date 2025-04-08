@@ -36,30 +36,38 @@ PRESYNAPTIC = 2
 POSTSYNAPTIC = 1
 
 def return_seg_edge(task: SynapseEdgeTask) -> tuple[SegmentID, SegmentID]:
-    # Pull a small volume ± 256px
     xyz_center = task['centroid_xyz']
-    # Get the mask of pre/post
     try:
-        prepost_mask = CloudVolume(task['synapse_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])[
-            xyz_center[0] - RADIUS:xyz_center[0] + RADIUS,
-            xyz_center[1] - RADIUS:xyz_center[1] + RADIUS,
-            xyz_center[2] - RADIUS:xyz_center[2] + RADIUS,
-            0
-        ].squeeze()
-        seg_mask = CloudVolume(task['segmentation_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])[
-            xyz_center[0] - RADIUS:xyz_center[0] + RADIUS,
-            xyz_center[1] - RADIUS:xyz_center[1] + RADIUS,
-            xyz_center[2] - RADIUS:xyz_center[2] + RADIUS,
-            0
-        ].squeeze()
+        # Get the CloudVolume dimensions
+        synapse_volume = CloudVolume(task['synapse_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])
+        segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])
+
+        bounds = synapse_volume.shape
+        x_min, x_max = max(0, xyz_center[0] - RADIUS), min(bounds[0], xyz_center[0] + RADIUS)
+        y_min, y_max = max(0, xyz_center[1] - RADIUS), min(bounds[1], xyz_center[1] + RADIUS)
+        z_min, z_max = max(0, xyz_center[2] - RADIUS), min(bounds[2], xyz_center[2] + RADIUS)
+
+        if x_min >= x_max or y_min >= y_max or z_min >= z_max:
+            raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
+
+        prepost_mask = synapse_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
+        seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
+
         # Count seg voxels per id in pre, get ID with most common count => pre_id
         pre_max_id = np.unique(seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True)
-        # Most common pre id:
-        pre_max_id = pre_max_id[0][np.argmax(pre_max_id[1])]
+        if pre_max_id[0].size == 0:
+            raise ValueError("No presynaptic ID pixels found at {}.".format(xyz_center))
+            pre_max_id = (-1,)
+        else:
+            pre_max_id = pre_max_id[0][np.argmax(pre_max_id[1])]
+
         # Count seg voxels per id in post, get ID with most common count => post_id
         post_max_id = np.unique(seg_mask[prepost_mask == POSTSYNAPTIC], return_counts=True)
-        # Most common post id:
-        post_max_id = post_max_id[0][np.argmax(post_max_id[1])]
+        if post_max_id[0].size == 0:
+            raise ValueError("No postsynaptic ID pixels found at {}.".format(xyz_center))
+            post_max_id = (-1,)
+        else:
+            post_max_id = post_max_id[0][np.argmax(post_max_id[1])]
 
         return pre_max_id, post_max_id
     except Exception as e:
