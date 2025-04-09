@@ -1,7 +1,29 @@
+from typing import TypedDict
+
 from pynamodb.models import Model
 from pynamodb.attributes import UnicodeAttribute
 
+CentroidXYZ = tuple[float, float, float]
 
+class SynapseEdgeTask(TypedDict):
+    centroid_xyz: CentroidXYZ
+    synapse_channel: str
+    segmentation_channel: str
+    mip: list
+
+class SynapseEdgeTaskPayload(TypedDict):
+    graph_id: str
+    centroid_xyz: CentroidXYZ
+    synapse_channel: str
+    segmentation_channel: str
+    mip: list
+
+class ContactomeEdgeTaskPayload(TypedDict):
+    graph_id: str
+    cuboid_start: CentroidXYZ
+    cuboid_radius: CentroidXYZ
+    segmentation_channel: str
+    mip: list
 
 class SynapseEdgeResultsModel(Model):
     """

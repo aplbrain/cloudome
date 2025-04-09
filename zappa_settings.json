@@ -6,9 +6,11 @@
             "dateutil",
             "botocore",
             "s3transfer",
-            "concurrent"
+            "concurrent",
+            "intern"
         ],
         "profile_name": "bossdb",
+        "slim_handler": true,
         "project_name": "cloudome",
         "aws_region": "us-east-1",
         "runtime": "python3.11",
@@ -22,6 +24,8 @@
                     "enabled": true
                 }
             }
-        ]
+        ],
+        "timeout_seconds": 900,
+        "memory_size": 2000
     }
 }
