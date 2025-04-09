@@ -7,7 +7,7 @@ from cloudvolume import CloudVolume
 import cc3d
 import argparse
 
-from database import ResultsModel
+from database import SynapseEdgeResultsModel
 
 
 sqs = boto3.client('sqs', region_name='us-east-1')
@@ -19,12 +19,9 @@ def get_centroids_for_syn_mask(synapse_channel: str, mip: list|int):
     binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() > 0)
     labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
     stats = cc3d.statistics(labels_out)
-    try:
-        with open("../centroids.csv", 'w') as fh:
-            for syn_centroid in stats['centroids']:
-                fh.write(",".join(map(str, map(int, syn_centroid))) + "\n")
-    except:
-        import pdb; pdb.set_trace()
+    with open("../centroids.csv", 'w') as fh:
+        for syn_centroid in stats['centroids']:
+            fh.write(",".join(map(str, map(int, syn_centroid))) + "\n")
 
 
 def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, synapse_channel: str, segmentation_channel: str, mip: list, enqueue_limit: int = None):
@@ -66,7 +63,7 @@ def local_dequeue():
 
 def initialize_resources():
     # TODO: Also provision SQS at some point...
-    ResultsModel.create_table(
+    SynapseEdgeResultsModel.create_table(
         billing_mode="PAY_PER_REQUEST",
     )
 

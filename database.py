@@ -3,7 +3,7 @@ from pynamodb.attributes import UnicodeAttribute
 
 
 
-class ResultsModel(Model):
+class SynapseEdgeResultsModel(Model):
     """
     A DynamoDB store for results
     """
@@ -12,8 +12,15 @@ class ResultsModel(Model):
         region = "us-east-1"
 
     graph_id = UnicodeAttribute(hash_key=True)
-    synapse_id = UnicodeAttribute(range_key=True) # "pre150_post60_x100_y20_z42"
-    # pre_id = UnicodeAttribute()
-    # post_id = UnicodeAttribute()
-    # centroid_xyz = UnicodeAttribute()
+    synapse_id = UnicodeAttribute(range_key=True) # "syn_x100_y20_z42_pre150_post60"
 
+class ContactEdgeResultsModel(Model):
+    """
+    A DynamoDB store for results
+    """
+    class Meta:
+        table_name = "CloudomeResults"
+        region = "us-east-1"
+
+    graph_id = UnicodeAttribute(hash_key=True)
+    synapse_id = UnicodeAttribute(range_key=True) # "ctc_x100_y20_z42_pre150_post60_w100"
