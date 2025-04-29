@@ -162,6 +162,9 @@ def process_queue_job(event, context):
         payload = SynapseEdgeTaskPayload(**payload)
         graph_id = payload.pop("graph_id")
         u, v = return_seg_edge(payload)
+        # # should probably just NOT insert -1's and 0's at all... too much clutter
+        # if u in [0, -1] or v in [0, -1]:
+        #     return
         # Save edge to dynamodb
         SynapseEdgeResultsModel(
             graph_id=graph_id,

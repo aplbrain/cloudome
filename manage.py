@@ -15,6 +15,7 @@ sqs = boto3.client('sqs', region_name='us-east-1')
 
 
 def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int):
+    # Lump pre/post (IDs 2 and 1) into a single binary mask:
     binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() > 0)
     labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
     stats = cc3d.statistics(labels_out)
