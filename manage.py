@@ -6,25 +6,24 @@ from cloudvolume import CloudVolume
 import cc3d
 import argparse
 import csv
+import os
 
 from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel
 
 
 sqs = boto3.client('sqs', region_name='us-east-1')
 
-MIP = [72, 72, 84]
 
-
-def get_centroids_for_syn_mask(synapse_channel: str, mip: list|int):
+def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int):
     binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() > 0)
     labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
     stats = cc3d.statistics(labels_out)
-    with open("../centroids.csv", 'w') as fh:
+    with open(output_file, 'w') as fh:
         for syn_centroid in stats['centroids']:
             fh.write(",".join(map(str, map(int, syn_centroid))) + "\n")
 
 
-def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, synapse_channel: str, segmentation_channel: str, mip: list, enqueue_limit: int = None):
+def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, synapse_channel: str, segmentation_channel: str, mip: list|int, enqueue_limit: int = None):
     """
     Read centroids from a file and enqueue them to SQS for processing.
     """
@@ -46,7 +45,8 @@ def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, syna
             )
 
 
-def generate_cuboidwise_tasks_for_contactome(sqs_url: str, segmentation_channel: str, mip: list, enqueue_limit: int = None):
+def generate_cuboidwise_tasks_for_contactome(sqs_url: str, graph_id: str, segmentation_channel: str, mip: list|int,
+                                      block_size: tuple = (64, 64, 64), enqueue_limit: int = None):
     # Create a file with each line being a cuboid start and radius
     seg_data = CloudVolume(segmentation_channel, mip=mip, cache=True)
     blocks = block_compute(
@@ -56,17 +56,17 @@ def generate_cuboidwise_tasks_for_contactome(sqs_url: str, segmentation_channel:
         y_stop=int(seg_data.shape[1]),
         z_start=0,
         z_stop=int(seg_data.shape[2]),
-        block_size=(64, 64, 64),
+        block_size=block_size,
     )
     print(f"Queueing {len(blocks)} blocks")
-    # exit(1)
+
     for i, ((x_start, x_stop), (y_start, y_stop), (z_start, z_stop)) in enumerate(blocks):
         if enqueue_limit is not None and i >= enqueue_limit:
             break
 
         # enqueue a ContactomeEdgeTaskPayload
         payload: ContactomeEdgeTaskPayload = {
-            "graph_id": "example_graph_id",
+            "graph_id": graph_id,
             "cuboid_start": (x_start, y_start, z_start),
             "cuboid_radius": (x_stop - x_start, y_stop - y_start, z_stop - z_start),
             "segmentation_channel": segmentation_channel,
@@ -78,17 +78,17 @@ def generate_cuboidwise_tasks_for_contactome(sqs_url: str, segmentation_channel:
         )
 
 
-def local_dequeue():
+def local_dequeue(sqs_url: str):
     import cloudome
     response = sqs.receive_message(
-        QueueUrl="https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
+        QueueUrl=sqs_url,
         MaxNumberOfMessages=1
     )
     if "Messages" in response:
         for message in response["Messages"]:
             cloudome.process_queue_job({"Records": [message]}, None)
             sqs.delete_message(
-                QueueUrl="https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
+                QueueUrl=sqs_url,
                 ReceiptHandle=message["ReceiptHandle"]
             )
 
@@ -122,6 +122,13 @@ def export_results_to_csv(graph_id: str, output_file: str):
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Cloudome Command Line Interface")
+
+    # Global arguments for multiple commands
+    parser.add_argument("--mip", type=str, default="72,72,84",
+                      help="MIP value as either a single int or comma-separated values (e.g., 72,72,84)")
+    parser.add_argument("--sqs-url", type=str, default="https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
+                        help="SQS URL for job queue")
+
     subparsers = parser.add_subparsers(dest="namespace", required=True)
 
     # Namespace: synapses
@@ -129,11 +136,24 @@ def parse_arguments():
     synapses_subparsers = synapses_parser.add_subparsers(dest="command", required=True)
 
     # Subcommand: generate (synapses)
-    synapses_subparsers.add_parser("generate", help="Generate centroids for synapse mask")
+    syn_generate_parser = synapses_subparsers.add_parser("generate", help="Generate centroids for synapse mask")
+    syn_generate_parser.add_argument("--synapse-channel", type=str, required=True,
+                                    help="S3 path to synapse channel data")
+    syn_generate_parser.add_argument("--output-file", type=str, default="centroids.csv",
+                                    help="Output file path for centroids")
 
     # Subcommand: enqueue (synapses)
     enqueue_parser = synapses_subparsers.add_parser("enqueue", help="Enqueue centroids from file")
-    enqueue_parser.add_argument("--enqueue-limit", type=int, default=None, help="Limit the number of centroids to enqueue")
+    enqueue_parser.add_argument("--graph-id", type=str, required=True,
+                              help="Graph ID for processing")
+    enqueue_parser.add_argument("--centroids-file", type=str, required=True,
+                              help="Path to centroids file")
+    enqueue_parser.add_argument("--synapse-channel", type=str, required=True,
+                              help="S3 path to synapse channel data")
+    enqueue_parser.add_argument("--segmentation-channel", type=str, required=True,
+                              help="S3 path to segmentation channel data")
+    enqueue_parser.add_argument("--enqueue-limit", type=int, default=None,
+                              help="Limit the number of centroids to enqueue")
 
     # Namespace: contactome
     contactome_parser = subparsers.add_parser("contactome", help="Commands related to contactome")
@@ -141,12 +161,26 @@ def parse_arguments():
 
     # Subcommand: generate (contactome)
     contactome_generate_parser = contactome_subparsers.add_parser("generate", help="Generate cuboidwise tasks for contactome")
-    contactome_generate_parser.add_argument("--enqueue-limit", type=int, default=None, help="Limit the number of tasks to enqueue")
+    contactome_generate_parser.add_argument("--graph-id", type=str, required=True,
+                                         help="Graph ID for processing")
+    contactome_generate_parser.add_argument("--segmentation-channel", type=str, required=True,
+                                         help="S3 path to segmentation channel data")
+    contactome_generate_parser.add_argument("--block-size-x", type=int, default=64,
+                                         help="Block size for X dimension")
+    contactome_generate_parser.add_argument("--block-size-y", type=int, default=64,
+                                         help="Block size for Y dimension")
+    contactome_generate_parser.add_argument("--block-size-z", type=int, default=64,
+                                         help="Block size for Z dimension")
+    contactome_generate_parser.add_argument("--enqueue-limit", type=int, default=None,
+                                         help="Limit the number of tasks to enqueue")
 
     # Namespace: export
     export_parser = subparsers.add_parser("export", help="Export results to CSV")
     export_parser.add_argument("graph_id", type=str, help="Graph ID to export results for")
     export_parser.add_argument("output_file", type=str, help="Output CSV file path")
+
+    # Namespace: dequeue
+    dequeue_parser = subparsers.add_parser("dequeue", help="Process a single job from the queue")
 
     return parser.parse_args()
 
@@ -154,29 +188,50 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
+    # Parse MIP from string - always convert to a list for consistency
+    if "," in args.mip:
+        mip = [int(x) for x in args.mip.split(",")]
+    else:
+        try:
+            # If a single value, make it a list with the same value for all dimensions
+            single_mip = int(args.mip)
+            mip = [single_mip, single_mip, single_mip]
+        except ValueError:
+            print(f"Error: MIP value '{args.mip}' is not valid. Use a single integer or comma-separated integers.")
+            exit(1)
+
     if args.namespace == "synapses":
         if args.command == "generate":
-            get_centroids_for_syn_mask("s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses", mip=MIP)
+            get_centroids_for_syn_mask(
+                synapse_channel=args.synapse_channel,
+                output_file=args.output_file,
+                mip=mip
+            )
         elif args.command == "enqueue":
             enqueue_centroids_from_file(
-                sqs_url="https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
-                graph_id="example_graph_id",
-                filename="../centroids.csv",
-                synapse_channel="s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses",
-                segmentation_channel="s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000",
-                mip=MIP,
+                sqs_url=args.sqs_url,
+                graph_id=args.graph_id,
+                filename=args.centroids_file,
+                synapse_channel=args.synapse_channel,
+                segmentation_channel=args.segmentation_channel,
+                mip=mip,
                 enqueue_limit=args.enqueue_limit
             )
     elif args.namespace == "contactome":
         if args.command == "generate":
+            block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
             generate_cuboidwise_tasks_for_contactome(
-                sqs_url="https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
-                segmentation_channel="s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000",
-                mip=MIP,
+                sqs_url=args.sqs_url,
+                graph_id=args.graph_id,
+                segmentation_channel=args.segmentation_channel,
+                mip=mip,
+                block_size=block_size,
                 enqueue_limit=args.enqueue_limit
             )
     elif args.namespace == "export":
         export_results_to_csv(args.graph_id, args.output_file)
+    elif args.namespace == "dequeue":
+        local_dequeue(args.sqs_url)
 
 
 if __name__ == "__main__":

@@ -7,7 +7,9 @@
             "botocore",
             "s3transfer",
             "concurrent",
-            "intern"
+            "intern",
+            "ipykernel",
+            "networkx"
         ],
         "profile_name": "bossdb",
         "slim_handler": true,

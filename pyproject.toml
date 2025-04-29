@@ -10,6 +10,8 @@ dependencies = [
     "connected-components-3d>=3.23.0",
     "flask>=3.1.0",
     "intern>=1.4.1",
+    "ipykernel>=6.29.5",
+    "matplotlib>=3.10.1",
     "numpy>=2.2.4",
     "pynamodb>=6.0.2",
     "setuptools==74.1.2",
