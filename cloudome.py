@@ -66,8 +66,12 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
             raise ValueError("No postsynaptic ID pixels found at {}.".format(xyz_center))
         else:
             post_max_id = vals[0]
-            if post_max_id == 0 and len(vals) > 1:
+            # throw out zero and presyn id
+            if (post_max_id == 0 or post_max_id == pre_max_id) and len(vals) > 1:
                 post_max_id = vals[1]
+                # check again for index 1
+                if (post_max_id == 0 or post_max_id == pre_max_id) and len(vals) > 2:
+                    post_max_id = vals[2]
 
         return pre_max_id, post_max_id
     except Exception as e:
