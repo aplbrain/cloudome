@@ -23,7 +23,7 @@ def _():
     return "Cloudome 2025-04-03"
 
 
-RADIUS = 32
+RADIUS = 10
 PRESYNAPTIC = 2
 POSTSYNAPTIC = 1
 
@@ -47,6 +47,9 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
 
         # Count seg voxels per id in pre, get ID with most common count => pre_id
         vals, counts = np.unique(seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True)
+        unique_counts = zip(counts, vals)
+        unique_counts = sorted(unique_counts, reverse=True)
+        counts, vals = zip(*unique_counts)
         if len(vals) == 0:
             raise ValueError("No presynaptic ID pixels found at {}.".format(xyz_center))
         else:
@@ -56,6 +59,9 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
 
         # Count seg voxels per id in post, get ID with most common count => post_id
         vals, counts = np.unique(seg_mask[prepost_mask == POSTSYNAPTIC], return_counts=True)
+        unique_counts = zip(counts, vals)
+        unique_counts = sorted(unique_counts, reverse=True)
+        counts, vals = zip(*unique_counts)
         if len(vals) == 0:
             raise ValueError("No postsynaptic ID pixels found at {}.".format(xyz_center))
         else:
