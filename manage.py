@@ -33,7 +33,7 @@ def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, syna
             if enqueue_limit is not None and i >= enqueue_limit:
                 break
             centroid_xyz = tuple(map(int, line.strip().split(',')))
-            payload = {
+            payload: SynapseEdgeTaskPayload = {
                 "graph_id": graph_id,
                 "centroid_xyz": centroid_xyz,
                 "synapse_channel": synapse_channel,
@@ -112,9 +112,9 @@ def export_results_to_csv(graph_id: str, output_file: str):
 
         writer.writeheader()
 
-        # Stream results from SynapseEdgeResultsModel
-        for result in SynapseEdgeResultsModel.query(graph_id):
-            writer.writerow({'graph_id': result.graph_id, 'synapse_id': result.synapse_id})
+        # # Stream results from SynapseEdgeResultsModel
+        # for result in SynapseEdgeResultsModel.query(graph_id):
+        #     writer.writerow({'graph_id': result.graph_id, 'synapse_id': result.synapse_id})
 
         # Stream results from ContactEdgeResultsModel
         for result in ContactEdgeResultsModel.query(graph_id):

@@ -27,7 +27,7 @@ RADIUS = 32
 PRESYNAPTIC = 2
 POSTSYNAPTIC = 1
 
-def return_seg_edge(task: SynapseEdgeTask) -> tuple[SegmentID, SegmentID]:
+def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]:
     xyz_center = task['centroid_xyz']
     try:
         # Get the CloudVolume dimensions
@@ -46,20 +46,22 @@ def return_seg_edge(task: SynapseEdgeTask) -> tuple[SegmentID, SegmentID]:
         seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
 
         # Count seg voxels per id in pre, get ID with most common count => pre_id
-        pre_max_id = np.unique(seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True)
-        if pre_max_id[0].size == 0:
+        vals, counts = np.unique(seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True)
+        if len(vals) == 0:
             raise ValueError("No presynaptic ID pixels found at {}.".format(xyz_center))
-            pre_max_id = (-1,)
         else:
-            pre_max_id = pre_max_id[0][np.argmax(pre_max_id[1])]
+            pre_max_id = vals[0]
+            if pre_max_id == 0 and len(vals) > 1:
+                pre_max_id = vals[1]
 
         # Count seg voxels per id in post, get ID with most common count => post_id
-        post_max_id = np.unique(seg_mask[prepost_mask == POSTSYNAPTIC], return_counts=True)
-        if post_max_id[0].size == 0:
+        vals, counts = np.unique(seg_mask[prepost_mask == POSTSYNAPTIC], return_counts=True)
+        if len(vals) == 0:
             raise ValueError("No postsynaptic ID pixels found at {}.".format(xyz_center))
-            post_max_id = (-1,)
         else:
-            post_max_id = post_max_id[0][np.argmax(post_max_id[1])]
+            post_max_id = vals[0]
+            if post_max_id == 0 and len(vals) > 1:
+                post_max_id = vals[1]
 
         return pre_max_id, post_max_id
     except Exception as e:
@@ -141,36 +143,38 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload):
 
 
 def process_queue_job(event, context):
-    payload = json.loads(event['Records'][0]['body'])
-    if "cuboid_start" in payload:
-        # Contactome edge
-        payload = ContactomeEdgeTaskPayload(**payload)
-        graph_id = payload.pop("graph_id")
-        # get edges and weights:
-        edges = return_ctc_edges(payload)
-        for (pre, post, count) in edges:
+    # event_records = json.loads(event['Records'][0]['body'])
+    for record in event['Records']:
+        payload = json.loads(record['body'])
+        if "cuboid_start" in payload:
+            # Contactome edge
+            payload = ContactomeEdgeTaskPayload(**payload)
+            graph_id = payload.pop("graph_id")
+            # get edges and weights:
+            edges = return_ctc_edges(payload)
+            for (pre, post, count) in edges:
+                # Save edge to dynamodb
+                ContactEdgeResultsModel(
+                    graph_id=graph_id,
+                    # XYZ goes first so that it can still serve as a useful key to retrieve
+                    # a specific centroid from the listing:
+                    synapse_id=f"ctc_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_pre{pre}_post{post}_w{count}"
+                ).save()
+
+        else:
+            # Synapse edge
+            payload = SynapseEdgeTaskPayload(**payload)
+            graph_id = payload.pop("graph_id")
+            u, v = return_seg_edge(payload)
+            # # should probably just NOT insert -1's and 0's at all... too much clutter
+            # if u in [0, -1] or v in [0, -1]:
+            #     return
             # Save edge to dynamodb
-            ContactEdgeResultsModel(
+            SynapseEdgeResultsModel(
                 graph_id=graph_id,
                 # XYZ goes first so that it can still serve as a useful key to retrieve
                 # a specific centroid from the listing:
-                synapse_id=f"ctc_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_pre{pre}_post{post}_w{count}"
+                synapse_id=f"syn_x{payload['centroid_xyz'][0]}_y{payload['centroid_xyz'][1]}_z{payload['centroid_xyz'][2]}_pre{u}_post{v}"
             ).save()
-
-    else:
-        # Synapse edge
-        payload = SynapseEdgeTaskPayload(**payload)
-        graph_id = payload.pop("graph_id")
-        u, v = return_seg_edge(payload)
-        # # should probably just NOT insert -1's and 0's at all... too much clutter
-        # if u in [0, -1] or v in [0, -1]:
-        #     return
-        # Save edge to dynamodb
-        SynapseEdgeResultsModel(
-            graph_id=graph_id,
-            # XYZ goes first so that it can still serve as a useful key to retrieve
-            # a specific centroid from the listing:
-            synapse_id=f"syn_x{payload['centroid_xyz'][0]}_y{payload['centroid_xyz'][1]}_z{payload['centroid_xyz'][2]}_pre{u}_post{v}"
-        ).save()
 
 

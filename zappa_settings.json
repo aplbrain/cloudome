@@ -8,10 +8,9 @@
             "s3transfer",
             "concurrent",
             "intern",
-            "ipykernel",
-            "networkx"
+            "ipykernel"
         ],
-        "profile_name": "bossdb",
+        "profile_name": "default",
         "slim_handler": true,
         "project_name": "cloudome",
         "aws_region": "us-east-1",

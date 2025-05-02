@@ -12,6 +12,7 @@ dependencies = [
     "intern>=1.4.1",
     "ipykernel>=6.29.5",
     "matplotlib>=3.10.1",
+    "networkx>=3.4.2",
     "numpy>=2.2.4",
     "pynamodb>=6.0.2",
     "setuptools==74.1.2",
