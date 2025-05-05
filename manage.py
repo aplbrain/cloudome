@@ -1,6 +1,8 @@
 from intern.utils.parallel import block_compute
 import json
 import boto3
+import networkx as nx
+from io import TextIOWrapper
 from tqdm.auto import tqdm
 from cloudvolume import CloudVolume
 import cc3d
@@ -101,7 +103,7 @@ def initialize_resources():
     )
 
 
-def export_results_to_csv(graph_id: str, output_file: str):
+def export_dynamodb_results_to_csv(graph_id: str, output_file: str):
     """
     Export results for a given graph_id to a CSV file.
     This function streams the results to handle large datasets efficiently.
@@ -119,6 +121,33 @@ def export_results_to_csv(graph_id: str, output_file: str):
         # Stream results from ContactEdgeResultsModel
         for result in ContactEdgeResultsModel.query(graph_id):
             writer.writerow({'graph_id': result.graph_id, 'synapse_id': result.synapse_id})
+
+def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
+    """
+    Simplify contactome data by aggregating weights for each (pre, post) pair.
+    """
+    import csv
+    from collections import defaultdict
+
+    # Use a dictionary to accumulate weights for each (pre, post) pair
+    weights = defaultdict(int)
+
+    reader = csv.reader(instream)
+    writer = csv.writer(outstream)
+
+    # Read and process each row
+    for row in reader:
+        # Extract pre, post, and weight from the synapse_id field
+        match = re.match(r"pre(\d+)_post(\d+)_w(\d+)", row[1])
+        if match:
+            pre, post, weight = match.groups()
+            key = (pre, post)
+            weights[key] += int(weight)
+
+    # Write the aggregated results to the output stream
+    writer.writerow(["pre", "post", "weight"])  # Header
+    for (pre, post), total_weight in weights.items():
+        writer.writerow([pre, post, total_weight])
 
 
 def parse_arguments():
@@ -175,6 +204,13 @@ def parse_arguments():
     contactome_generate_parser.add_argument("--enqueue-limit", type=int, default=None,
                                          help="Limit the number of tasks to enqueue")
 
+    # Subcommand: simplify (contactome)
+    contactome_simplify_parser = contactome_subparsers.add_parser("simplify", help="Simplify contactome raw export to edgelist CSV")
+    contactome_simplify_parser.add_argument("--raw-file", type=str, required=True,
+                                         help="Path to CSV file with raw exported contactome data (from `export` command)")
+    contactome_simplify_parser.add_argument("--output-file", type=str, required=True,
+                                         help="Output file path for simplified contactome data")
+
     # Namespace: export
     export_parser = subparsers.add_parser("export", help="Export results to CSV")
     export_parser.add_argument("graph_id", type=str, help="Graph ID to export results for")
@@ -229,8 +265,14 @@ def main():
                 block_size=block_size,
                 enqueue_limit=args.enqueue_limit
             )
+        elif args.command == "simplify":
+            with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
+                simplify_contactome_data(
+                    instream=infile,
+                    outstream=outfile
+                )
     elif args.namespace == "export":
-        export_results_to_csv(args.graph_id, args.output_file)
+        export_dynamodb_results_to_csv(args.graph_id, args.output_file)
     elif args.namespace == "dequeue":
         local_dequeue(args.sqs_url)
 
