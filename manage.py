@@ -149,6 +149,39 @@ def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
     for (pre, post), total_weight in weights.items():
         writer.writerow([pre, post, total_weight])
 
+def simplify_synapse_data(raw_file: str, output_file: str, invalid_nodes: list, simple: bool = False):
+    """
+    Simplify synapse data by processing raw export and generating an edgelist CSV.
+    """
+    import networkx as nx
+
+    # Create a directed multigraph
+    g = nx.MultiDiGraph()
+
+    with open(raw_file, "r") as f:
+        # Skip header
+        next(f)
+        for line in f:
+            if line.startswith("#"):
+                continue
+            _, edge_raw = line.strip().split(",")
+            # Parse synapse data (e.g., syn_x1000_y1068_z444_pre-1_post-1)
+            _, x, y, z, pre, post = edge_raw.split("_")
+            x, y, z = int(x[1:]), int(y[1:]), int(z[1:])
+            pre = pre[len("pre"):]
+            post = post[len("post"):]
+            g.add_edge(pre, post, pos=(x, y, z))
+
+    # Remove invalid nodes (-1 and 0)
+    g.remove_nodes_from(invalid_nodes)
+
+    # If simple is True, downcast to a simple graph
+    if simple:
+        g = nx.DiGraph(g)
+
+    # Save the simplified graph as an edgelist
+    nx.write_edgelist(g, output_file)
+
 
 def parse_arguments():
     parser = argparse.ArgumentParser(description="Cloudome Command Line Interface")
@@ -184,6 +217,17 @@ def parse_arguments():
                               help="S3 path to segmentation channel data")
     enqueue_parser.add_argument("--enqueue-limit", type=int, default=None,
                               help="Limit the number of centroids to enqueue")
+
+    # Subcommand: simplify (synapses)
+    syn_simplify_parser = synapses_subparsers.add_parser("simplify", help="Simplify raw synapse data to a CSV file")
+    syn_simplify_parser.add_argument("--raw-file", type=str, required=True,
+                                    help="Path to CSV file with raw exported synapse data (from `export` command)")
+    syn_simplify_parser.add_argument("--output-file", type=str, required=True,
+                                    help="Output file path for simplified synapse data")
+    syn_simplify_parser.add_argument("--invalid-nodes", type=str, nargs='*', default=["-1", "0"],
+                                    help="List of invalid nodes to remove from the graph")
+    syn_simplify_parser.add_argument("--simple", action='store_true',
+                                    help="If set, downcast to a simple graph")
 
     # Namespace: contactome
     contactome_parser = subparsers.add_parser("contactome", help="Commands related to contactome")
@@ -254,6 +298,14 @@ def main():
                 mip=mip,
                 enqueue_limit=args.enqueue_limit
             )
+        elif args.command == "simplify":
+            with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
+                simplify_synapse_data(
+                    instream=infile,
+                    outstream=outfile,
+                    invalid_nodes=args.invalid_nodes,
+                    simple=args.simple
+                )
     elif args.namespace == "contactome":
         if args.command == "generate":
             block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
