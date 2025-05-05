@@ -149,7 +149,7 @@ def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
     for (pre, post), total_weight in weights.items():
         writer.writerow([pre, post, total_weight])
 
-def simplify_synapse_data(raw_file: str, output_file: str, invalid_nodes: list, simple: bool = False):
+def simplify_synapse_data(raw_file: TextIOWrapper, output_file: str, invalid_nodes: list, simple: bool = False):
     """
     Simplify synapse data by processing raw export and generating an edgelist CSV.
     """
@@ -158,19 +158,18 @@ def simplify_synapse_data(raw_file: str, output_file: str, invalid_nodes: list, 
     # Create a directed multigraph
     g = nx.MultiDiGraph()
 
-    with open(raw_file, "r") as f:
-        # Skip header
-        next(f)
-        for line in f:
-            if line.startswith("#"):
-                continue
-            _, edge_raw = line.strip().split(",")
-            # Parse synapse data (e.g., syn_x1000_y1068_z444_pre-1_post-1)
-            _, x, y, z, pre, post = edge_raw.split("_")
-            x, y, z = int(x[1:]), int(y[1:]), int(z[1:])
-            pre = pre[len("pre"):]
-            post = post[len("post"):]
-            g.add_edge(pre, post, pos=(x, y, z))
+    # Skip header
+    next(raw_file)
+    for line in raw_file:
+        if line.startswith("#"):
+            continue
+        _, edge_raw = line.strip().split(",")
+        # Parse synapse data (e.g., syn_x1000_y1068_z444_pre-1_post-1)
+        _, x, y, z, pre, post = edge_raw.split("_")
+        x, y, z = int(x[1:]), int(y[1:]), int(z[1:])
+        pre = pre[len("pre"):]
+        post = post[len("post"):]
+        g.add_edge(pre, post, pos=(x, y, z))
 
     # Remove invalid nodes (-1 and 0)
     g.remove_nodes_from(invalid_nodes)
@@ -299,10 +298,10 @@ def main():
                 enqueue_limit=args.enqueue_limit
             )
         elif args.command == "simplify":
-            with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
+            with open(args.raw_file, 'r') as infile:
                 simplify_synapse_data(
-                    instream=infile,
-                    outstream=outfile,
+                    infile,
+                    output_file=args.output_file,
                     invalid_nodes=args.invalid_nodes,
                     simple=args.simple
                 )
