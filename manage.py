@@ -9,6 +9,7 @@ import cc3d
 import argparse
 import csv
 import os
+from typing import Literal
 
 from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel
 
@@ -16,7 +17,7 @@ from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, Contact
 sqs = boto3.client('sqs', region_name='us-east-1')
 
 
-def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int, mask: str = "post"):
+def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int, mask: Literal["pre", "post", "all"] = "post"):
     # Lump pre/post (IDs 2 and 1) into a single binary mask:
     if mask == "all":
         binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() > 0)
@@ -210,7 +211,8 @@ def parse_arguments():
                                     help="S3 path to synapse channel data")
     syn_generate_parser.add_argument("--output-file", type=str, default="centroids.csv",
                                     help="Output file path for centroids")
-    syn_generate_parser.add_argument("--mask", type=str, default="post", 
+    syn_generate_parser.add_argument("--mask", type=str, default="post",
+                                     choices=["pre", "post", "all"],
                                      help="Generate centroids based on pre, post, or agglomerated masks")
 
     # Subcommand: enqueue (synapses)
