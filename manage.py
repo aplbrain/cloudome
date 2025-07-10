@@ -10,6 +10,7 @@ import argparse
 import csv
 import os
 from typing import Literal
+import numpy as np
 
 from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel
 
@@ -28,6 +29,14 @@ def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list
     else:
         raise ValueError("Synapse mask value must be 'all', 'pre', or 'post'.")
     labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
+
+    dust_threshold = 75
+    print(len(labels_out))
+    cc_segids, pxct = np.unique(labels_out, return_counts=True)
+    mask_ids = [ sid for sid, ct in zip(cc_segids, pxct) if ct < dust_threshold and sid != 0 ]
+    labels_out[ np.isin(labels_out, mask_ids) ] = 0
+    print(len(labels_out))
+
     stats = cc3d.statistics(labels_out)
     with open(output_file, 'w') as fh:
         for syn_centroid in stats['centroids']:
