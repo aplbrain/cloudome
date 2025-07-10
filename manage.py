@@ -30,17 +30,23 @@ def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list
         raise ValueError("Synapse mask value must be 'all', 'pre', or 'post'.")
     labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
 
-    dust_threshold = 75
-    print(len(labels_out))
-    cc_segids, pxct = np.unique(labels_out, return_counts=True)
-    mask_ids = [ sid for sid, ct in zip(cc_segids, pxct) if ct < dust_threshold and sid != 0 ]
-    labels_out[ np.isin(labels_out, mask_ids) ] = 0
-    print(len(labels_out))
+    dust_threshold = 1
+
+#     labels_filtered = cc3d.dust(
+#         labels_out,
+#         threshold=dust_threshold,
+#         in_place=False,
+#         precomputed_ccl=True
+#     )
 
     stats = cc3d.statistics(labels_out)
+#     stats = cc3d.statistics(labels_filtered)
     with open(output_file, 'w') as fh:
-        for syn_centroid in stats['centroids']:
-            fh.write(",".join(map(str, map(int, syn_centroid))) + "\n")
+        for i, syn_centroid in enumerate(stats['centroids']):
+            print(syn_centroid)
+            if np.any(np.isnan(syn_centroid)):
+                continue
+            fh.write(",".join(map(str, map(int, syn_centroid))) + "," + str(stats["voxel_counts"][i]) + "\n")
 
 
 def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, synapse_channel: str, segmentation_channel: str, mip: list|int, enqueue_limit: int = None):
