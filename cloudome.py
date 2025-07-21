@@ -56,6 +56,8 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
             pre_max_id = vals[0]
             if pre_max_id == 0 and len(vals) > 1:
                 pre_max_id = vals[1]
+            elif pre_max_id == 0:
+                raise ValueError("The only presynaptic ID returned is 0.")
 
         # Count seg voxels per id in post, get ID with most common count => post_id
         vals, counts = np.unique(seg_mask[prepost_mask == POSTSYNAPTIC], return_counts=True)
@@ -72,6 +74,8 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
                 # check again for index 1
                 if (post_max_id == 0 or post_max_id == pre_max_id) and len(vals) > 2:
                     post_max_id = vals[2]
+            if post_max_id == 0:
+                raise ValueError("The only postsynaptic ID returned is 0.")
 
         return pre_max_id, post_max_id
     except Exception as e:
