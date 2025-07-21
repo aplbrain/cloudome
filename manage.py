@@ -11,6 +11,7 @@ import csv
 import os
 from typing import Literal
 import numpy as np
+from tqdm import tqdm
 
 from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel
 
@@ -32,21 +33,15 @@ def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list
 
     dust_threshold = 1
 
-#     labels_filtered = cc3d.dust(
-#         labels_out,
-#         threshold=dust_threshold,
-#         in_place=False,
-#         precomputed_ccl=True
-#     )
-
     stats = cc3d.statistics(labels_out)
-#     stats = cc3d.statistics(labels_filtered)
     with open(output_file, 'w') as fh:
-        for i, syn_centroid in enumerate(stats['centroids']):
-            print(syn_centroid)
+        for i, syn_centroid in tqdm(enumerate(stats['centroids'])):
             if np.any(np.isnan(syn_centroid)):
                 continue
-            fh.write(",".join(map(str, map(int, syn_centroid))) + "," + str(stats["voxel_counts"][i]) + "\n")
+            size = stats["voxel_counts"][i]
+            if size > dust_threshold:
+                fh.write(",".join(map(str, map(int, syn_centroid))) + "\n")
+
 
 
 def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, synapse_channel: str, segmentation_channel: str, mip: list|int, enqueue_limit: int = None):
