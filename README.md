@@ -3,10 +3,10 @@
 ## install and configure
 
 ```bash
-zappa deploy
-zappa schedule
+uv run zappa deploy
+uv run zappa schedule
 # then for incremental updates,
-zappa update
+uv run zappa update
 ```
 
 ## provisioning resources
