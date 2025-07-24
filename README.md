@@ -2,11 +2,12 @@
 
 ## install and configure
 
+These were run on Ubuntu. MacOS (ARM) won't work.
 ```bash
-zappa deploy
-zappa schedule
+uv run zappa deploy
+uv run zappa schedule
 # then for incremental updates,
-zappa update
+uv run zappa update
 ```
 
 ## provisioning resources
@@ -57,7 +58,7 @@ uv run manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith
 
 uv run manage.py synapses enqueue --graph-id connectome-40k --centroids-file synapse-centroids-40k.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ --enqueue-limit 10
 
-uv run manage.py synapses export connectome-40k synapses_40k.csv
+uv run manage.py export connectome-40k synapses_40k.csv
 
 uv run manage.py synapses simplify --raw-file synapses_40k.csv --output-file synapse_weights.csv
 ```

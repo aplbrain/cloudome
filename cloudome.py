@@ -9,6 +9,8 @@ from database import (
     SynapseEdgeResultsModel,
     ContactEdgeResultsModel,
 )
+import cc3d
+import math
 
 os.environ['CLOUD_VOLUME_DIR'] = '/tmp/cloudvolume'
 os.makedirs('/tmp/cloudvolume', exist_ok=True)
@@ -34,6 +36,7 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         synapse_volume = CloudVolume(task['synapse_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])
         segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])
 
+        # Calculate bounding box
         bounds = synapse_volume.shape
         x_min, x_max = max(0, xyz_center[0] - RADIUS), min(bounds[0], xyz_center[0] + RADIUS)
         y_min, y_max = max(0, xyz_center[1] - RADIUS), min(bounds[1], xyz_center[1] + RADIUS)
@@ -42,6 +45,7 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
             raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
 
+        # Pull volumes inside bounding box for both synapse and segmentation paint
         prepost_mask = synapse_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
         seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
 
@@ -50,30 +54,59 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         unique_counts = zip(counts, vals)
         unique_counts = sorted(unique_counts, reverse=True)
         counts, vals = zip(*unique_counts)
+        # Error handling for 0 case
         if len(vals) == 0:
             raise ValueError("No presynaptic ID pixels found at {}.".format(xyz_center))
         else:
             pre_max_id = vals[0]
             if pre_max_id == 0 and len(vals) > 1:
                 pre_max_id = vals[1]
+            elif pre_max_id == 0:
+                raise ValueError("The only presynaptic ID returned is 0.")
+        
+        # Subsample PSD voxels to only the one we care about
+        labels_out, N = cc3d.connected_components(prepost_mask, return_N=True)
+        stats = cc3d.statistics(labels_out)
+        distance = math.inf
+        label = -1
+        for i, syn_centroid in enumerate(stats['centroids']):
+            temp_distance = math.dist(syn_centroid, [RADIUS, RADIUS, RADIUS])
+            if temp_distance < distance:
+                distance = temp_distance
+                label = i
 
         # Count seg voxels per id in post, get ID with most common count => post_id
-        vals, counts = np.unique(seg_mask[prepost_mask == POSTSYNAPTIC], return_counts=True)
+        vals, counts = np.unique(seg_mask[labels_out == label], return_counts=True)
         unique_counts = zip(counts, vals)
         unique_counts = sorted(unique_counts, reverse=True)
         counts, vals = zip(*unique_counts)
+        # Error handling for 0 case
         if len(vals) == 0:
             raise ValueError("No postsynaptic ID pixels found at {}.".format(xyz_center))
         else:
             post_max_id = vals[0]
-            # throw out zero and presyn id
+            # Throw out id zero and presyn id if they are in indices 0 and/or 1
             if (post_max_id == 0 or post_max_id == pre_max_id) and len(vals) > 1:
                 post_max_id = vals[1]
-                # check again for index 1
                 if (post_max_id == 0 or post_max_id == pre_max_id) and len(vals) > 2:
                     post_max_id = vals[2]
+            # If no postsynaptic ID is found, add in contact voxels
+            if (post_max_id == 0 or post_max_id == pre_max_id):
+                label_mask_encoding = 1
+                label_mask = (labels_out == label)
+                masked_synapse_seg_vol = seg_mask 
+                masked_synapse_seg_vol[label_mask] = label_mask_encoding
+                contacts = cc3d.contacts(masked_synapse_seg_vol, connectivity=26)
+                max_contact = 0
+                max_contact_id = -1
+                for contact in contacts:
+                    if (label_mask_encoding in contact) and (pre_max_id not in contact) and (contacts[contact] > max_contact):
+                        max_contact = contacts[contact]
+                        max_contact_id = contact[1]
+                post_max_id = max_contact_id
 
         return pre_max_id, post_max_id
+
     except Exception as e:
         print(f"[ERROR]\t{e}")
         return -1, -1
