@@ -19,16 +19,9 @@ from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, Contact
 sqs = boto3.client('sqs', region_name='us-east-1')
 
 
-def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int, mask: Literal["pre", "post", "all"] = "post"):
-    # Lump pre/post (IDs 2 and 1) into a single binary mask:
-    if mask == "all":
-        binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() > 0)
-    elif mask == "post":
-        binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() == 1)
-    elif mask == "pre":
-        binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() == 2)
-    else:
-        raise ValueError("Synapse mask value must be 'all', 'pre', or 'post'.")
+def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int):
+    # Use post synaptic densities as centroids. One synapse per PSD
+    binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() == 1)
     labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
 
     dust_threshold = 1
@@ -221,9 +214,6 @@ def parse_arguments():
                                     help="S3 path to synapse channel data")
     syn_generate_parser.add_argument("--output-file", type=str, default="centroids.csv",
                                     help="Output file path for centroids")
-    syn_generate_parser.add_argument("--mask", type=str, default="post",
-                                     choices=["pre", "post", "all"],
-                                     help="Generate centroids based on pre, post, or agglomerated masks")
 
     # Subcommand: enqueue (synapses)
     enqueue_parser = synapses_subparsers.add_parser("enqueue", help="Enqueue centroids from file")
@@ -307,7 +297,6 @@ def main():
                 synapse_channel=args.synapse_channel,
                 output_file=args.output_file,
                 mip=mip,
-                mask=args.mask
             )
         elif args.command == "enqueue":
             enqueue_centroids_from_file(
