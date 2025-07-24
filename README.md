@@ -2,6 +2,7 @@
 
 ## install and configure
 
+These were run on Ubuntu. MacOS (ARM) won't work.
 ```bash
 uv run zappa deploy
 uv run zappa schedule
