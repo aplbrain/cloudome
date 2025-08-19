@@ -74,6 +74,8 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
             if temp_distance < distance:
                 distance = temp_distance
                 label = i
+        if label == -1:
+            raise ValueError("No synapse centroids found in given subvolume.")
 
         # Count seg voxels per id in post, get ID with most common count => post_id
         vals, counts = np.unique(seg_mask[labels_out == label], return_counts=True)
@@ -156,15 +158,17 @@ def count_contact_voxels(segmentation):
 
 def return_ctc_edges(task: ContactomeEdgeTaskPayload):
     xyz_start = task['cuboid_start']
+    print(xyz_start)
     xyz_radius = task['cuboid_radius']
     try:
         # Get the CloudVolume dimensions
         segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, parallel=False, cache=False, secrets="", mip=task['mip'])
 
         bounds = segmentation_volume.shape
-        x_min, x_max = max(0, xyz_start[0]), min(bounds[0], xyz_start[0] + xyz_radius[0])
-        y_min, y_max = max(0, xyz_start[1]), min(bounds[1], xyz_start[1] + xyz_radius[1])
-        z_min, z_max = max(0, xyz_start[2]), min(bounds[2], xyz_start[2] + xyz_radius[2])
+        # Add +1 to each leading edge coord so that contacts with adjacent cuboids are properly recorded
+        x_min, x_max = max(0, xyz_start[0]), min(bounds[0], xyz_start[0] + xyz_radius[0] + 1)
+        y_min, y_max = max(0, xyz_start[1]), min(bounds[1], xyz_start[1] + xyz_radius[1] + 1)
+        z_min, z_max = max(0, xyz_start[2]), min(bounds[2], xyz_start[2] + xyz_radius[2] + 1)
 
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
             raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")

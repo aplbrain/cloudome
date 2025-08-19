@@ -12,6 +12,7 @@ import os
 from typing import Literal
 import numpy as np
 from tqdm import tqdm
+import re
 
 from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel
 
@@ -60,21 +61,31 @@ def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, syna
 
 
 def generate_cuboidwise_tasks_for_contactome(sqs_url: str, graph_id: str, segmentation_channel: str, mip: list|int,
-                                      block_size: tuple = (64, 64, 64), enqueue_limit: int = None):
+                                      block_size: tuple = (64, 64, 64), z_start: int = None, z_end: int = None, enqueue_limit: int = None):
     # Create a file with each line being a cuboid start and radius
     seg_data = CloudVolume(segmentation_channel, mip=mip, cache=True)
+    
+    if z_end:
+        z_end = z_end if z_end < int(seg_data.shape[2]) else int(seg_data.shape[2])
+    else:
+        z_end = int(seg_data.shape[2])
+
     blocks = block_compute(
         x_start=0,
         x_stop=int(seg_data.shape[0]),
         y_start=0,
         y_stop=int(seg_data.shape[1]),
-        z_start=0,
-        z_stop=int(seg_data.shape[2]),
+        z_start=z_start or 0,
+        z_stop=z_end,
         block_size=block_size,
     )
-    print(f"Queueing {len(blocks)} blocks")
 
-    for i, ((x_start, x_stop), (y_start, y_stop), (z_start, z_stop)) in enumerate(blocks):
+    if enqueue_limit:
+        print(f"Queueing {min(len(blocks), enqueue_limit)} blocks")
+    else:
+        print(f"Queueing {len(blocks)} blocks")
+
+    for i, ((x_start, x_stop), (y_start, y_stop), (z_start, z_stop)) in tqdm(enumerate(blocks)):
         if enqueue_limit is not None and i >= enqueue_limit:
             break
 
@@ -149,7 +160,7 @@ def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
     # Read and process each row
     for row in reader:
         # Extract pre, post, and weight from the synapse_id field
-        match = re.match(r"pre(\d+)_post(\d+)_w(\d+)", row[1])
+        match = re.search(r"pre(\d+)_post(\d+)_w(\d+)", row[1])
         if match:
             pre, post, weight = match.groups()
             key = (pre, post)
@@ -253,8 +264,12 @@ def parse_arguments():
                                          help="Block size for X dimension")
     contactome_generate_parser.add_argument("--block-size-y", type=int, default=64,
                                          help="Block size for Y dimension")
-    contactome_generate_parser.add_argument("--block-size-z", type=int, default=64,
+    contactome_generate_parser.add_argument("--block-size-z", type=int, default=32,
                                          help="Block size for Z dimension")
+    contactome_generate_parser.add_argument("--z-start", type=int, default=None,
+                                         help="Starting Z slice")
+    contactome_generate_parser.add_argument("--z-end", type=int, default=None,
+                                         help="Ending Z slice")
     contactome_generate_parser.add_argument("--enqueue-limit", type=int, default=None,
                                          help="Limit the number of tasks to enqueue")
 
@@ -325,6 +340,8 @@ def main():
                 segmentation_channel=args.segmentation_channel,
                 mip=mip,
                 block_size=block_size,
+                z_start=args.z_start,
+                z_end=args.z_end,
                 enqueue_limit=args.enqueue_limit
             )
         elif args.command == "simplify":
