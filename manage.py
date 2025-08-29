@@ -1,3 +1,5 @@
+import csv
+from collections import defaultdict
 from intern.utils.parallel import block_compute
 import json
 import boto3
@@ -14,7 +16,7 @@ import numpy as np
 from tqdm import tqdm
 import re
 
-from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel
+from database import SynapseEdgeResultsModel, ContactomeEdgeTaskPayload, ContactEdgeResultsModel, TaskType, VolumeTaskPayload
 
 
 sqs = boto3.client('sqs', region_name='us-east-1')
@@ -60,8 +62,17 @@ def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, syna
             )
 
 
-def generate_cuboidwise_tasks_for_contactome(sqs_url: str, graph_id: str, segmentation_channel: str, mip: list|int,
-                                      block_size: tuple = (64, 64, 64), z_start: int = None, z_end: int = None, enqueue_limit: int = None):
+def generate_cuboidwise_tasks_for_contactome_or_volume(
+        sqs_url: str, 
+        graph_id: str, 
+        task_type: TaskType,
+        segmentation_channel: str, 
+        mip: list|int,
+        block_size: tuple = (64, 64, 64), 
+        z_start: int = None, 
+        z_end: int = None, 
+        enqueue_limit: int = None,
+    ):
     # Create a file with each line being a cuboid start and radius
     seg_data = CloudVolume(segmentation_channel, mip=mip, cache=True)
     
@@ -90,13 +101,14 @@ def generate_cuboidwise_tasks_for_contactome(sqs_url: str, graph_id: str, segmen
             break
 
         # enqueue a ContactomeEdgeTaskPayload
-        payload: ContactomeEdgeTaskPayload = {
+        payload = {
             "graph_id": graph_id,
+            "task_type": task_type,
             "cuboid_start": (x_start, y_start, z_start),
             "cuboid_radius": (x_stop - x_start, y_stop - y_start, z_stop - z_start),
             "segmentation_channel": segmentation_channel,
-            "mip": mip
-        }
+            "mip": mip,
+        }  # ContactomeEdgeTaskPayload | VolumeTaskPayload 
         sqs.send_message(
             QueueUrl=sqs_url,
             MessageBody=json.dumps(payload)
@@ -148,9 +160,6 @@ def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
     """
     Simplify contactome data by aggregating weights for each (pre, post) pair.
     """
-    import csv
-    from collections import defaultdict
-
     # Use a dictionary to accumulate weights for each (pre, post) pair
     weights = defaultdict(int)
 
@@ -170,6 +179,31 @@ def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
     writer.writerow(["pre", "post", "weight"])  # Header
     for (pre, post), total_weight in weights.items():
         writer.writerow([pre, post, total_weight])
+
+
+def simplify_volume_data(instream: TextIOWrapper, outstream: TextIOWrapper):
+    """
+    Simplify volume data by summing voxel counts per seg ID
+    """
+    # Use a dictionary to accumulate voxel counts for each seg ID
+    voxel_counts = defaultdict(int)
+
+    reader = csv.reader(instream)
+    writer = csv.writer(outstream)
+
+    # Read and process each row
+    for row in reader:
+        # The row looks like a tuple of (dataset ID, "vol_x100_y20_z42_seg19934_v1263")
+        match = re.search(r"seg(\d+)_v(\d+)", row[1])
+        if match:
+            seg_id, voxel_count = match.groups()
+            voxel_counts[seg_id] += int(voxel_count)
+
+    # Write the aggregated results to the output stream
+    writer.writerow(["seg_id", "voxel_count"])  # Header
+    for seg_id, total_count in voxel_counts.items():
+        writer.writerow([seg_id, total_count])
+
 
 def simplify_synapse_data(raw_file: TextIOWrapper, output_file: str, invalid_nodes: list, simple: bool = False):
     """
@@ -279,6 +313,36 @@ def parse_arguments():
                                          help="Path to CSV file with raw exported contactome data (from `export` command)")
     contactome_simplify_parser.add_argument("--output-file", type=str, required=True,
                                          help="Output file path for simplified contactome data")
+    
+    # Namespace: volume
+    volume_parser = subparsers.add_parser("volume", help="Commands related to volume computation")
+    volume_subparsers = volume_parser.add_subparsers(dest="command", required=True)
+
+    # Subcommand: generate (volume)
+    volume_generate_parser = volume_subparsers.add_parser("generate", help="Generate cuboidwise tasks for volume")
+    volume_generate_parser.add_argument("--graph-id", type=str, required=True,
+                                         help="Graph ID for processing")
+    volume_generate_parser.add_argument("--segmentation-channel", type=str, required=True,
+                                         help="S3 path to segmentation channel data")
+    volume_generate_parser.add_argument("--block-size-x", type=int, default=64,
+                                         help="Block size for X dimension")
+    volume_generate_parser.add_argument("--block-size-y", type=int, default=64,
+                                         help="Block size for Y dimension")
+    volume_generate_parser.add_argument("--block-size-z", type=int, default=32,
+                                         help="Block size for Z dimension")
+    volume_generate_parser.add_argument("--z-start", type=int, default=None,
+                                         help="Starting Z slice")
+    volume_generate_parser.add_argument("--z-end", type=int, default=None,
+                                         help="Ending Z slice")
+    volume_generate_parser.add_argument("--enqueue-limit", type=int, default=None,
+                                         help="Limit the number of tasks to enqueue")
+
+    # Subcommand: simplify (volume)
+    volume_simplify_parser = volume_subparsers.add_parser("simplify", help="Simplify volume raw export to edgelist CSV")
+    volume_simplify_parser.add_argument("--raw-file", type=str, required=True,
+                                         help="Path to CSV file with raw exported volume data (from `export` command)")
+    volume_simplify_parser.add_argument("--output-file", type=str, required=True,
+                                         help="Output file path for simplified volume data")
 
     # Namespace: export
     export_parser = subparsers.add_parser("export", help="Export results to CSV")
@@ -334,9 +398,10 @@ def main():
     elif args.namespace == "contactome":
         if args.command == "generate":
             block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
-            generate_cuboidwise_tasks_for_contactome(
+            generate_cuboidwise_tasks_for_contactome_or_volume(
                 sqs_url=args.sqs_url,
                 graph_id=args.graph_id,
+                task_type="contactome",
                 segmentation_channel=args.segmentation_channel,
                 mip=mip,
                 block_size=block_size,
@@ -347,6 +412,26 @@ def main():
         elif args.command == "simplify":
             with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
                 simplify_contactome_data(
+                    instream=infile,
+                    outstream=outfile
+                )
+    elif args.namespace == "volume":
+        if args.command == "generate":
+            block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
+            generate_cuboidwise_tasks_for_contactome_or_volume(
+                sqs_url=args.sqs_url,
+                graph_id=args.graph_id,
+                task_type="volume",
+                segmentation_channel=args.segmentation_channel,
+                mip=mip,
+                block_size=block_size,
+                z_start=args.z_start,
+                z_end=args.z_end,
+                enqueue_limit=args.enqueue_limit
+            )
+        elif args.command == "simplify":
+            with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
+                simplify_volume_data(
                     instream=infile,
                     outstream=outfile
                 )
