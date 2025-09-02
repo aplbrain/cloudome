@@ -115,47 +115,12 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         print(f"[ERROR]\t{e}")
         return -1, -1
 
-def count_contact_voxels(segmentation):
-    segment_ids = np.unique(segmentation)
-    contact_counts = {i: {j: 0 for j in segment_ids if j != i} for i in segment_ids}
-
-    # Loop over all pairs of segment IDs, creating a mask for each segment and
-    # counting the number of voxels that are in contact between the two masks.
-    # "Contact" here is defined by shifting the mask in all cardinal directions
-    # and taking the union of the shifted masks with the unshifted.
-    #
-    # In one dimension, that looks like this:
-    #
-    # i_mask = [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]
-    # j_mask = [0, 0, 0, 0, 1, 1, 0, 0, 0, 0]
-    #
-    # Right shift j-mask:
-    # i_mask = [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]
-    # j_mask = [0, 0, 0, 0, 0, 0, 1, 1, 0, 0]
-    # Union of the two is 0.
-    #
-    # Left shift j-mask:
-    # i_mask = [0, 0, 1, 1, 0, 0, 0, 0, 0, 0]
-    # j_mask = [0, 0, 0, 1, 1, 0, 0, 0, 0, 0]
-    #                    ^
-    # Union of the two is 1.
-    # Thus, 0+1 = 1 contact voxel.
-    for i in segment_ids:
-        i_mask = segmentation == i
-        # 0-pad the mask so that we can roll it in all directions
-        i_mask = np.pad(i_mask, 1, mode="constant", constant_values=0)
-        for j in segment_ids:
-            if i != j:
-                j_mask = segmentation == j
-                j_mask = np.pad(j_mask, 1, mode="constant", constant_values=0)
-                contact_counts[i][j] = np.sum(
-                    i_mask & np.roll(j_mask, 1, axis=0)
-                    | i_mask & np.roll(j_mask, -1, axis=0)
-                    | i_mask & np.roll(j_mask, 1, axis=1)
-                    | i_mask & np.roll(j_mask, -1, axis=1)
-                    | i_mask & np.roll(j_mask, 1, axis=2)
-                    | i_mask & np.roll(j_mask, -1, axis=2)
-                )
+def count_contact_voxels(segmentation, resolution):
+    contacts = cc3d.contacts(segmentation,
+                             connectivity=6,
+                             anisotropy=tuple(resolution), 
+                             surface_area=True
+    )
     return contact_counts
 
 def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
@@ -191,13 +156,13 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload):
 
         # Count seg voxels per id in pre, get ID with most common count => pre_id
         contact_counts = count_contact_voxels(seg_mask)
-        edges = []
-        for pre_id, post_counts in contact_counts.items():
-            if pre_id > 0:
-                for post_id, count in post_counts.items():
-                    if count > 0 and pre_id != post_id and post_id > 0:
-                        edges.append((pre_id, post_id, count))
-        return edges
+        # edges = []
+        # for pre_id, post_counts in contact_counts.items():
+        #     if pre_id > 0:
+        #         for post_id, count in post_counts.items():
+        #             if count > 0 and pre_id != post_id and post_id > 0:
+        #                 edges.append((pre_id, post_id, count))
+        return contact_counts
     except Exception as e:
         print(f"[ERROR]\t[ctc] {e}")
         return []
@@ -236,13 +201,13 @@ def process_queue_job(event, context):
             graph_id = payload.pop("graph_id")
             # get edges and weights:
             edges = return_ctc_edges(payload)
-            for (pre, post, count) in edges:
+            for ids in edges:
                 # Save edge to dynamodb
                 ContactEdgeResultsModel(
                     graph_id=graph_id,
                     # XYZ goes first so that it can still serve as a useful key to retrieve
                     # a specific centroid from the listing:
-                    synapse_id=f"ctc_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_pre{pre}_post{post}_w{count}"
+                    synapse_id=f"ctc_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_pre{ids[0]}_post{ids[1]}_w{edges[ids]}"
                 ).save()
 
         elif "cuboid_start" in payload and payload.get("task_type", "contactome") == "volume":
