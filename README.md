@@ -3,6 +3,7 @@
 ## install and configure
 
 These were run on Ubuntu. MacOS (ARM) won't work.
+
 ```bash
 uv run zappa deploy
 uv run zappa schedule
@@ -50,6 +51,66 @@ uv run python3 manage.py contactome simplify --raw-file contactome_40k.csv --out
 ```
 
 This will leave you with `pre_post_weights.csv`, which contains aggregated weights for each (pre, post) pair.
+
+## compute per-segment volume
+
+End-to-end flow for computing voxel counts per segmentation ID across the volume.
+
+Global flags: you can pass a global `--mip` (single int or comma-separated) and `--sqs-url` to all commands below.
+
+### populate the task queue
+
+Enqueue cuboid-wise volume tasks over your segmentation channel. Adjust block sizes and Z range as needed.
+
+```bash
+uv run python3 manage.py volume generate \
+	--graph-id volume-40k \
+	--segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ \
+	--block-size-x 64 --block-size-y 64 --block-size-z 32 \
+	--z-start 0 --z-end 1000 \
+	--enqueue-limit 10  # optional for a quick smoke test
+```
+
+Each task processes a cuboid and the worker emits DynamoDB items like:
+
+```
+graph_id=volume-40k
+synapse_id=vol_x{xs}_y{ys}_z{zs}_seg{SEGID}_v{VOXEL_COUNT}
+```
+
+### wait...
+
+Monitor queue depth while workers process jobs:
+
+```bash
+AWS_REGION=us-east-1 aws sqs get-queue-attributes \
+	--queue-url "https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs" \
+	--attribute-names ApproximateNumberOfMessagesNotVisible
+```
+
+### collect results
+
+Export raw results for a given `graph_id` to CSV:
+
+```bash
+uv run python3 manage.py export volume-40k volume_raw.csv
+```
+
+### simplify to per-seg totals
+
+Aggregate voxel counts per segmentation ID from the exported CSV:
+
+```bash
+uv run python3 manage.py volume simplify \
+	--raw-file volume_raw.csv \
+	--output-file seg_voxel_counts.csv
+```
+
+This produces `seg_voxel_counts.csv` with columns:
+
+```
+seg_id,voxel_count
+```
 
 ## generate a connectome
 
