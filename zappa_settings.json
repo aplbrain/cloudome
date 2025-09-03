@@ -8,7 +8,9 @@
             "s3transfer",
             "concurrent",
             "intern",
-            "ipykernel"
+            "ipykernel",
+            "tqdm",
+            "matplotlib"
         ],
         "profile_name": "default",
         "slim_handler": true,

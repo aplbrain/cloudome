@@ -121,7 +121,7 @@ def count_contact_voxels(segmentation, resolution):
                              anisotropy=tuple(resolution), 
                              surface_area=True
     )
-    return contact_counts
+    return contacts
 
 def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
     """
@@ -155,7 +155,7 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload):
         seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
 
         # Count seg voxels per id in pre, get ID with most common count => pre_id
-        contact_counts = count_contact_voxels(seg_mask)
+        contact_counts = count_contact_voxels(seg_mask, task['mip'])
         # edges = []
         # for pre_id, post_counts in contact_counts.items():
         #     if pre_id > 0:
