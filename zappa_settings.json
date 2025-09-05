@@ -9,9 +9,9 @@
             "concurrent",
             "intern",
             "ipykernel",
-            "tqdm",
             "matplotlib"
         ],
+        "exclude_glob": ["**/__pycache__/*"],
         "profile_name": "default",
         "slim_handler": true,
         "project_name": "cloudome",
