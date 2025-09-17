@@ -123,6 +123,15 @@ def count_contact_voxels(segmentation, resolution):
     )
     return contacts
 
+def remove_contact_overlap(
+    contact_counts: dict[tuple(SegmentID, SegmentID), int],
+    counts_to_remove: list(dict[tuple(SegmentID, SegmentID), int])
+):
+    final_contacts = {}
+    for count_to_remove in counts_to_remove:
+        final_contacts = dict(Counter(contact_counts) - Counter(counts_to_remove))
+    return final_contacts
+
 def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
     """
     Count the number of voxels for each segment ID in the segmentation volume.
@@ -154,15 +163,13 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload):
 
         seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
 
-        # Count seg voxels per id in pre, get ID with most common count => pre_id
-        contact_counts = count_contact_voxels(seg_mask, task['mip'])
-        # edges = []
-        # for pre_id, post_counts in contact_counts.items():
-        #     if pre_id > 0:
-        #         for post_id, count in post_counts.items():
-        #             if count > 0 and pre_id != post_id and post_id > 0:
-        #                 edges.append((pre_id, post_id, count))
-        return contact_counts
+        initial_contact_counts = count_contact_voxels(seg_mask, task['mip'])
+        overlap_x = count_contact_voxels(seg_mask[seg_mask.shape[0]-1:, :, :])
+        overlap_y = count_contact_voxels(seg_mask[:, seg_mask.shape[1]-1:, :])
+        overlap_z = count_contact_voxels(seg_mask[:, :, seg_mask.shape[2]-1:])
+        final_contact_counts = remove_contact_overlap(initial_contact_overlap, [overlap_x, overlap_y, overlap_z])
+        
+        return final_contact_counts
     except Exception as e:
         print(f"[ERROR]\t[ctc] {e}")
         return []
