@@ -13,6 +13,7 @@ from database import (
 )
 import cc3d
 import math
+from collections import Counter
 
 os.environ['CLOUD_VOLUME_DIR'] = '/tmp/cloudvolume'
 os.makedirs('/tmp/cloudvolume', exist_ok=True)
@@ -124,12 +125,12 @@ def count_contact_voxels(segmentation, resolution):
     return contacts
 
 def remove_contact_overlap(
-    contact_counts: dict[tuple(SegmentID, SegmentID), int],
-    counts_to_remove: list(dict[tuple(SegmentID, SegmentID), int])
+    contact_counts: dict[tuple[SegmentID], int],
+    counts_to_remove: list[dict[tuple[SegmentID], int]]
 ):
-    final_contacts = {}
+    final_contacts = contact_counts
     for count_to_remove in counts_to_remove:
-        final_contacts = dict(Counter(contact_counts) - Counter(counts_to_remove))
+        final_contacts = dict(Counter(final_contacts) - Counter(count_to_remove))
     return final_contacts
 
 def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
@@ -146,28 +147,29 @@ def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
 
 def return_ctc_edges(task: ContactomeEdgeTaskPayload):
     xyz_start = task['cuboid_start']
-    print(xyz_start)
     xyz_radius = task['cuboid_radius']
     try:
         # Get the CloudVolume dimensions
         segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, parallel=False, cache=False, secrets="", mip=task['mip'])
 
         bounds = segmentation_volume.shape
+        
         # Add +1 to each leading edge coord so that contacts with adjacent cuboids are properly recorded
         x_min, x_max = max(0, xyz_start[0]), min(bounds[0], xyz_start[0] + xyz_radius[0] + 1)
         y_min, y_max = max(0, xyz_start[1]), min(bounds[1], xyz_start[1] + xyz_radius[1] + 1)
         z_min, z_max = max(0, xyz_start[2]), min(bounds[2], xyz_start[2] + xyz_radius[2] + 1)
-
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
             raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
-
         seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
 
-        initial_contact_counts = count_contact_voxels(seg_mask, task['mip'])
-        overlap_x = count_contact_voxels(seg_mask[seg_mask.shape[0]-1:, :, :])
-        overlap_y = count_contact_voxels(seg_mask[:, seg_mask.shape[1]-1:, :])
-        overlap_z = count_contact_voxels(seg_mask[:, :, seg_mask.shape[2]-1:])
-        final_contact_counts = remove_contact_overlap(initial_contact_overlap, [overlap_x, overlap_y, overlap_z])
+        # Generate contacts for whole volume
+        initial_contact_counts = count_contact_voxels(seg_mask, segmentation_volume.resolution)
+
+        # Remove doubly-counted contacts at the edges
+        o_x = count_contact_voxels(seg_mask[-1:, :, :], segmentation_volume.resolution)
+        o_y = count_contact_voxels(seg_mask[:, -1:, :], segmentation_volume.resolution)
+        o_z = count_contact_voxels(seg_mask[:, :, -1:], segmentation_volume.resolution)
+        final_contact_counts = remove_contact_overlap(initial_contact_counts, [o_x, o_y, o_z])
         
         return final_contact_counts
     except Exception as e:
