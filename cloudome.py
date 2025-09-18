@@ -147,6 +147,7 @@ def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
 
 def return_ctc_edges(task: ContactomeEdgeTaskPayload):
     xyz_start = task['cuboid_start']
+    print(xyz_start)
     xyz_radius = task['cuboid_radius']
     try:
         # Get the CloudVolume dimensions
