@@ -5,5 +5,5 @@ To generate contactomes and connectomes locally, you can use the following comma
 ## Provision the queue
 
 ```bash
-uv run python3 local_manage.py contactome generate
+uv run python3 local_manage.py contactome generate --graph-id test0 --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
 ```

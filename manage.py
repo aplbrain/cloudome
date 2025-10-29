@@ -17,7 +17,7 @@ from tqdm import tqdm
 import re
 
 from database import SynapseEdgeResultsModel, SynapseEdgeTaskPayload, ContactomeEdgeTaskPayload, ContactEdgeResultsModel, TaskType, VolumeTaskPayload
-from shared_utils import generate_cuboidwise_tasks
+from shared_utils import _attach_contactome_parser, _attach_global_arguments, _parse_mip_argument, generate_cuboidwise_tasks
 
 
 sqs = boto3.client('sqs', region_name='us-east-1')
@@ -218,10 +218,7 @@ def parse_arguments():
     parser = argparse.ArgumentParser(description="Cloudome Command Line Interface")
 
     # Global arguments for multiple commands
-    parser.add_argument("--mip", type=str, default="72,72,84",
-                      help="MIP value as either a single int or comma-separated values (e.g., 72,72,84)")
-    parser.add_argument("--sqs-url", type=str, default="https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
-                        help="SQS URL for job queue")
+    _attach_global_arguments(parser)
 
     subparsers = parser.add_subparsers(dest="namespace", required=True)
 
@@ -261,27 +258,7 @@ def parse_arguments():
                                     help="If set, downcast to a simple graph")
 
     # Namespace: contactome
-    contactome_parser = subparsers.add_parser("contactome", help="Commands related to contactome")
-    contactome_subparsers = contactome_parser.add_subparsers(dest="command", required=True)
-
-    # Subcommand: generate (contactome)
-    contactome_generate_parser = contactome_subparsers.add_parser("generate", help="Generate cuboidwise tasks for contactome")
-    contactome_generate_parser.add_argument("--graph-id", type=str, required=True,
-                                         help="Graph ID for processing")
-    contactome_generate_parser.add_argument("--segmentation-channel", type=str, required=True,
-                                         help="S3 path to segmentation channel data")
-    contactome_generate_parser.add_argument("--block-size-x", type=int, default=64,
-                                         help="Block size for X dimension")
-    contactome_generate_parser.add_argument("--block-size-y", type=int, default=64,
-                                         help="Block size for Y dimension")
-    contactome_generate_parser.add_argument("--block-size-z", type=int, default=32,
-                                         help="Block size for Z dimension")
-    contactome_generate_parser.add_argument("--z-start", type=int, default=None,
-                                         help="Starting Z slice")
-    contactome_generate_parser.add_argument("--z-end", type=int, default=None,
-                                         help="Ending Z slice")
-    contactome_generate_parser.add_argument("--enqueue-limit", type=int, default=None,
-                                         help="Limit the number of tasks to enqueue")
+    (contactome_parser, contactome_subparsers, contactome_generate_parser) = _attach_contactome_parser(subparsers)
 
     # Subcommand: simplify (contactome)
     contactome_simplify_parser = contactome_subparsers.add_parser("simplify", help="Simplify contactome raw export to edgelist CSV")
@@ -334,17 +311,7 @@ def parse_arguments():
 def main():
     args = parse_arguments()
 
-    # Parse MIP from string - always convert to a list for consistency
-    if "," in args.mip:
-        mip = [int(x) for x in args.mip.split(",")]
-    else:
-        try:
-            # If a single value, make it a list with the same value for all dimensions
-            single_mip = int(args.mip)
-            mip = [single_mip, single_mip, single_mip]
-        except ValueError:
-            print(f"Error: MIP value '{args.mip}' is not valid. Use a single integer or comma-separated integers.")
-            exit(1)
+    mip = _parse_mip_argument(args.mip)
 
     if args.namespace == "synapses":
         if args.command == "generate":
@@ -355,7 +322,7 @@ def main():
             )
         elif args.command == "enqueue":
             enqueue_centroids_from_file(
-                sqs_url=args.sqs_url,
+                sqs_url=args.queue_url,
                 graph_id=args.graph_id,
                 filename=args.centroids_file,
                 synapse_channel=args.synapse_channel,
@@ -375,7 +342,7 @@ def main():
         if args.command == "generate":
             block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
             generate_cuboidwise_tasks_for_contactome_or_volume(
-                sqs_url=args.sqs_url,
+                sqs_url=args.queue_url,
                 graph_id=args.graph_id,
                 task_type="contactome",
                 segmentation_channel=args.segmentation_channel,
@@ -395,7 +362,7 @@ def main():
         if args.command == "generate":
             block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
             generate_cuboidwise_tasks_for_contactome_or_volume(
-                sqs_url=args.sqs_url,
+                sqs_url=args.queue_url,
                 graph_id=args.graph_id,
                 task_type="volume",
                 segmentation_channel=args.segmentation_channel,
@@ -414,7 +381,7 @@ def main():
     elif args.namespace == "export":
         export_dynamodb_results_to_csv(args.graph_id, args.output_file)
     elif args.namespace == "dequeue":
-        local_dequeue(args.sqs_url)
+        local_dequeue(args.queue_url)
 
 
 if __name__ == "__main__":
