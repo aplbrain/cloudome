@@ -1,5 +1,5 @@
 version = 1
-revision = 3
+revision = 2
 requires-python = ">=3.11"
 resolution-markers = [
     "python_full_version == '3.12.*' and sys_platform != 'win32'",
@@ -415,6 +415,7 @@ dependencies = [
     { name = "pandas" },
     { name = "pynamodb" },
     { name = "setuptools" },
+    { name = "task-queue" },
     { name = "tqdm" },
     { name = "zappa" },
 ]
@@ -434,6 +435,7 @@ requires-dist = [
     { name = "pandas", specifier = ">=2.3.1" },
     { name = "pynamodb", specifier = ">=6.0.2" },
     { name = "setuptools", specifier = "==74.1.2" },
+    { name = "task-queue", specifier = ">=2.14.3" },
     { name = "tqdm", specifier = ">=4.67.1" },
     { name = "zappa", specifier = ">=0.59.0" },
 ]
@@ -1715,6 +1717,18 @@ wheels = [
 ]
 
 [[package]]
+name = "pbr"
+version = "7.0.1"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "setuptools" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/ad/8d/23253ab92d4731eb34383a69b39568ca63a1685bec1e9946e91a32fc87ad/pbr-7.0.1.tar.gz", hash = "sha256:3ecbcb11d2b8551588ec816b3756b1eb4394186c3b689b17e04850dfc20f7e57", size = 130086, upload-time = "2025-08-21T09:40:56.015Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/56/c1/7e588435c2394dfded9197a8307417d1ca3b7f49d9bd5b6227d1f3f03ccd/pbr-7.0.1-py2.py3-none-any.whl", hash = "sha256:32df5156fbeccb6f8a858d1ebc4e465dcf47d6cc7a4895d5df9aa951c712fc35", size = 126091, upload-time = "2025-08-21T09:40:54.614Z" },
+]
+
+[[package]]
 name = "pexpect"
 version = "4.9.0"
 source = { registry = "https://pypi.org/simple" }
@@ -2348,6 +2362,29 @@ dependencies = [
 sdist = { url = "https://files.pythonhosted.org/packages/28/e3/55dcc2cfbc3ca9c29519eb6884dd1415ecb53b0e934862d3559ddcb7e20b/stack_data-0.6.3.tar.gz", hash = "sha256:836a778de4fec4dcd1dcd89ed8abff8a221f58308462e1c4aa2a3cf30148f0b9", size = 44707, upload-time = "2023-09-30T13:58:05.479Z" }
 wheels = [
     { url = "https://files.pythonhosted.org/packages/f1/7b/ce1eafaf1a76852e2ec9b22edecf1daa58175c090266e9f6c64afcd81d91/stack_data-0.6.3-py3-none-any.whl", hash = "sha256:d5558e0c25a4cb0853cddad3d77da9891a08cb85dd9f9f91b9f8cd66e511e695", size = 24521, upload-time = "2023-09-30T13:58:03.53Z" },
+]
+
+[[package]]
+name = "task-queue"
+version = "2.14.3"
+source = { registry = "https://pypi.org/simple" }
+dependencies = [
+    { name = "boto3" },
+    { name = "click" },
+    { name = "gevent" },
+    { name = "google-auth" },
+    { name = "google-cloud-core" },
+    { name = "numpy" },
+    { name = "orjson" },
+    { name = "pathos" },
+    { name = "pbr" },
+    { name = "requests" },
+    { name = "tenacity" },
+    { name = "tqdm" },
+]
+sdist = { url = "https://files.pythonhosted.org/packages/07/25/a1567d401bcf964c68fb83a78dfe26bba21cc0c2a44a42bf5ad2f66948c2/task_queue-2.14.3.tar.gz", hash = "sha256:91b4b02255af64c4684696129238567e562e7661b5aaef8f272833d67b6aa1e6", size = 48474, upload-time = "2025-07-02T00:46:01.698Z" }
+wheels = [
+    { url = "https://files.pythonhosted.org/packages/9c/30/2c2802d6d96782dcb395a66d69c50f35d1d3bcfc5630be821859dd81985b/task_queue-2.14.3-py3-none-any.whl", hash = "sha256:77192c54b1c935b1b0dfea83cb45c216beb7c86fa36f8df1fb163f19b92acc99", size = 39087, upload-time = "2025-07-02T00:46:00.044Z" },
 ]
 
 [[package]]
