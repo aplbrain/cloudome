@@ -176,7 +176,7 @@ def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
             weights[key] += int(weight)
 
     # Write the aggregated results to the output stream
-    writer.writerow(["pre", "post", "weight"])  # Header
+    writer.writerow(["id1", "id2", "nm^2"])  # Header
     for (pre, post), total_weight in weights.items():
         writer.writerow([pre, post, total_weight])
 
