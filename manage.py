@@ -6,104 +6,97 @@ import boto3
 import networkx as nx
 from io import TextIOWrapper
 from tqdm.auto import tqdm
-from cloudvolume import CloudVolume
-import cc3d
 import argparse
 import csv
-import os
-from typing import Literal
-import numpy as np
 from tqdm import tqdm
 import re
 
-from database import SynapseEdgeResultsModel, SynapseEdgeTaskPayload, ContactomeEdgeTaskPayload, ContactEdgeResultsModel, TaskType, VolumeTaskPayload
-from shared_utils import _attach_contactome_parser, _attach_global_arguments, _parse_mip_argument, generate_cuboidwise_tasks
+from database import (
+    SynapseEdgeResultsModel,
+    SynapseEdgeTaskPayload,
+    ContactomeEdgeTaskPayload,
+    ContactEdgeResultsModel,
+    TaskType,
+    VolumeTaskPayload,
+)
+from shared_cuboid_utils import generate_cuboidwise_tasks
+from shared_utils import (
+    _attach_contactome_parser,
+    _attach_global_arguments,
+    _attach_synapse_parser,
+    _parse_mip_argument,
+)
+from shared_synapse_utils import (
+    export_synapse_mask_centroids_to_file,
+    generate_centroidwise_tasks,
+)
 
 
-sqs = boto3.client('sqs', region_name='us-east-1')
+sqs = boto3.client("sqs", region_name="us-east-1")
 
 
-def get_centroids_for_syn_mask(synapse_channel: str, output_file: str, mip: list|int):
-    # Use post synaptic densities as centroids. One synapse per PSD
-    binary_syn_mask = (CloudVolume(synapse_channel, mip=mip, cache=True)[..., 0].squeeze() == 1)
-    labels_out, N = cc3d.connected_components(binary_syn_mask, return_N=True)
-
-    dust_threshold = 1
-
-    stats = cc3d.statistics(labels_out)
-    with open(output_file, 'w') as fh:
-        for i, syn_centroid in tqdm(enumerate(stats['centroids'])):
-            if np.any(np.isnan(syn_centroid)):
-                continue
-            size = stats["voxel_counts"][i]
-            if size > dust_threshold:
-                fh.write(",".join(map(str, map(int, syn_centroid))) + "\n")
-
-
-
-def enqueue_centroids_from_file(sqs_url: str, graph_id: str, filename: str, synapse_channel: str, segmentation_channel: str, mip: list|int, enqueue_limit: int = None):
+def enqueue_centroids_from_file(
+    sqs_url: str,
+    graph_id: str,
+    filename: str,
+    synapse_channel: str,
+    segmentation_channel: str,
+    mip: list | int,
+    enqueue_limit: int = None,
+):
     """
     Read centroids from a file and enqueue them to SQS for processing.
     """
-    with open(filename, 'r') as fh:
-        for i, line in enumerate(tqdm(fh)):
-            if enqueue_limit is not None and i >= enqueue_limit:
-                break
-            centroid_xyz = tuple(map(int, line.strip().split(',')))
-            payload: SynapseEdgeTaskPayload = {
-                "graph_id": graph_id,
-                "centroid_xyz": centroid_xyz,
-                "synapse_channel": synapse_channel,
-                "segmentation_channel": segmentation_channel,
-                "mip": mip
-            }
-            sqs.send_message(
-                QueueUrl=sqs_url,
-                MessageBody=json.dumps(payload)
+    for i, payload in enumerate(
+        tqdm(
+            generate_centroidwise_tasks(
+                graph_id=graph_id,
+                filename=filename,
+                synapse_channel=synapse_channel,
+                segmentation_channel=segmentation_channel,
+                mip=mip,
+                enqueue_limit=enqueue_limit,
             )
+        )
+    ):
+        sqs.send_message(QueueUrl=sqs_url, MessageBody=json.dumps(payload))
 
 
 def generate_cuboidwise_tasks_for_contactome_or_volume(
-        sqs_url: str, 
-        graph_id: str, 
-        task_type: TaskType,
-        segmentation_channel: str, 
-        mip: list|int,
-        block_size: tuple = (64, 64, 64), 
-        z_start: int = None, 
-        z_end: int = None, 
-        enqueue_limit: int = None,
-    ):
-    for task in tqdm(generate_cuboidwise_tasks(
-        graph_id=graph_id,
-        task_type=task_type,
-        segmentation_channel=segmentation_channel,
-        mip=mip,
-        block_size=block_size,
-        z_start=z_start,
-        z_end=z_end,
-        enqueue_limit=enqueue_limit,
-    )):
-        payload: ContactomeEdgeTaskPayload | VolumeTaskPayload = task
-        sqs.send_message(
-            QueueUrl=sqs_url,
-            MessageBody=json.dumps(payload)
+    sqs_url: str,
+    graph_id: str,
+    task_type: TaskType,
+    segmentation_channel: str,
+    mip: list | int,
+    block_size: tuple = (64, 64, 64),
+    z_start: int = None,
+    z_end: int = None,
+    enqueue_limit: int = None,
+):
+    for task in tqdm(
+        generate_cuboidwise_tasks(
+            graph_id=graph_id,
+            task_type=task_type,
+            segmentation_channel=segmentation_channel,
+            mip=mip,
+            block_size=block_size,
+            z_start=z_start,
+            z_end=z_end,
+            enqueue_limit=enqueue_limit,
         )
+    ):
+        payload: ContactomeEdgeTaskPayload | VolumeTaskPayload = task
+        sqs.send_message(QueueUrl=sqs_url, MessageBody=json.dumps(payload))
 
 
 def local_dequeue(sqs_url: str):
     import cloudome
-    response = sqs.receive_message(
-        QueueUrl=sqs_url,
-        MaxNumberOfMessages=1
-    )
+
+    response = sqs.receive_message(QueueUrl=sqs_url, MaxNumberOfMessages=1)
     if "Messages" in response:
         for message in response["Messages"]:
             cloudome.process_queue_job({"Records": [message]}, None)
-            sqs.delete_message(
-                QueueUrl=sqs_url,
-                ReceiptHandle=message["ReceiptHandle"]
-            )
+            sqs.delete_message(QueueUrl=sqs_url, ReceiptHandle=message["ReceiptHandle"])
 
 
 def initialize_resources():
@@ -118,8 +111,8 @@ def export_dynamodb_results_to_csv(graph_id: str, output_file: str):
     Export results for a given graph_id to a CSV file.
     This function streams the results to handle large datasets efficiently.
     """
-    with open(output_file, 'w', newline='') as csvfile:
-        fieldnames = ['graph_id', 'synapse_id']
+    with open(output_file, "w", newline="") as csvfile:
+        fieldnames = ["graph_id", "synapse_id"]
         writer = csv.DictWriter(csvfile, fieldnames=fieldnames)
 
         writer.writeheader()
@@ -130,7 +123,10 @@ def export_dynamodb_results_to_csv(graph_id: str, output_file: str):
 
         # Stream results from ContactEdgeResultsModel
         for result in ContactEdgeResultsModel.query(graph_id):
-            writer.writerow({'graph_id': result.graph_id, 'synapse_id': result.synapse_id})
+            writer.writerow(
+                {"graph_id": result.graph_id, "synapse_id": result.synapse_id}
+            )
+
 
 def simplify_contactome_data(instream: TextIOWrapper, outstream: TextIOWrapper):
     """
@@ -181,12 +177,12 @@ def simplify_volume_data(instream: TextIOWrapper, outstream: TextIOWrapper):
         writer.writerow([seg_id, total_count])
 
 
-def simplify_synapse_data(raw_file: TextIOWrapper, output_file: str, invalid_nodes: list, simple: bool = False):
+def simplify_synapse_data(
+    raw_file: TextIOWrapper, output_file: str, invalid_nodes: list, simple: bool = False
+):
     """
     Simplify synapse data by processing raw export and generating an edgelist CSV.
     """
-    import networkx as nx
-
     # Create a directed multigraph
     g = nx.MultiDiGraph()
 
@@ -199,8 +195,8 @@ def simplify_synapse_data(raw_file: TextIOWrapper, output_file: str, invalid_nod
         # Parse synapse data (e.g., syn_x1000_y1068_z444_pre-1_post-1)
         _, x, y, z, pre, post = edge_raw.split("_")
         x, y, z = int(x[1:]), int(y[1:]), int(z[1:])
-        pre = pre[len("pre"):]
-        post = post[len("post"):]
+        pre = pre[len("pre") :]
+        post = post[len("post") :]
         g.add_edge(pre, post, pos=(x, y, z))
 
     # Remove invalid nodes (-1 and 0)
@@ -219,91 +215,133 @@ def parse_arguments():
 
     # Global arguments for multiple commands
     _attach_global_arguments(parser)
-
     subparsers = parser.add_subparsers(dest="namespace", required=True)
 
     # Namespace: synapses
-    synapses_parser = subparsers.add_parser("synapses", help="Commands related to synapses")
-    synapses_subparsers = synapses_parser.add_subparsers(dest="command", required=True)
-
-    # Subcommand: generate (synapses)
-    syn_generate_parser = synapses_subparsers.add_parser("generate", help="Generate centroids for synapse mask")
-    syn_generate_parser.add_argument("--synapse-channel", type=str, required=True,
-                                    help="S3 path to synapse channel data")
-    syn_generate_parser.add_argument("--output-file", type=str, default="centroids.csv",
-                                    help="Output file path for centroids")
-
-    # Subcommand: enqueue (synapses)
-    enqueue_parser = synapses_subparsers.add_parser("enqueue", help="Enqueue centroids from file")
-    enqueue_parser.add_argument("--graph-id", type=str, required=True,
-                              help="Graph ID for processing")
-    enqueue_parser.add_argument("--centroids-file", type=str, required=True,
-                              help="Path to centroids file")
-    enqueue_parser.add_argument("--synapse-channel", type=str, required=True,
-                              help="S3 path to synapse channel data")
-    enqueue_parser.add_argument("--segmentation-channel", type=str, required=True,
-                              help="S3 path to segmentation channel data")
-    enqueue_parser.add_argument("--enqueue-limit", type=int, default=None,
-                              help="Limit the number of centroids to enqueue")
+    (
+        synapses_parser,
+        synapses_subparsers,
+        (synapses_generate_parser, enqueue_parser),
+    ) = _attach_synapse_parser(subparsers)
 
     # Subcommand: simplify (synapses)
-    syn_simplify_parser = synapses_subparsers.add_parser("simplify", help="Simplify raw synapse data to a CSV file")
-    syn_simplify_parser.add_argument("--raw-file", type=str, required=True,
-                                    help="Path to CSV file with raw exported synapse data (from `export` command)")
-    syn_simplify_parser.add_argument("--output-file", type=str, required=True,
-                                    help="Output file path for simplified synapse data")
-    syn_simplify_parser.add_argument("--invalid-nodes", type=str, nargs='*', default=["-1", "0"],
-                                    help="List of invalid nodes to remove from the graph")
-    syn_simplify_parser.add_argument("--simple", action='store_true',
-                                    help="If set, downcast to a simple graph")
+    syn_simplify_parser = synapses_subparsers.add_parser(
+        "simplify", help="Simplify raw synapse data to a CSV file"
+    )
+    syn_simplify_parser.add_argument(
+        "--raw-file",
+        type=str,
+        required=True,
+        help="Path to CSV file with raw exported synapse data (from `export` command)",
+    )
+    syn_simplify_parser.add_argument(
+        "--output-file",
+        type=str,
+        required=True,
+        help="Output file path for simplified synapse data",
+    )
+    syn_simplify_parser.add_argument(
+        "--invalid-nodes",
+        type=str,
+        nargs="*",
+        default=["-1", "0"],
+        help="List of invalid nodes to remove from the graph",
+    )
+    syn_simplify_parser.add_argument(
+        "--simple", action="store_true", help="If set, downcast to a simple graph"
+    )
 
     # Namespace: contactome
-    (contactome_parser, contactome_subparsers, contactome_generate_parser) = _attach_contactome_parser(subparsers)
+    (contactome_parser, contactome_subparsers, (contactome_generate_parser,)) = (
+        _attach_contactome_parser(subparsers)
+    )
 
     # Subcommand: simplify (contactome)
-    contactome_simplify_parser = contactome_subparsers.add_parser("simplify", help="Simplify contactome raw export to edgelist CSV")
-    contactome_simplify_parser.add_argument("--raw-file", type=str, required=True,
-                                         help="Path to CSV file with raw exported contactome data (from `export` command)")
-    contactome_simplify_parser.add_argument("--output-file", type=str, required=True,
-                                         help="Output file path for simplified contactome data")
-    
+    contactome_simplify_parser = contactome_subparsers.add_parser(
+        "simplify", help="Simplify contactome raw export to edgelist CSV"
+    )
+    contactome_simplify_parser.add_argument(
+        "--raw-file",
+        type=str,
+        required=True,
+        help="Path to CSV file with raw exported contactome data (from `export` command)",
+    )
+    contactome_simplify_parser.add_argument(
+        "--output-file",
+        type=str,
+        required=True,
+        help="Output file path for simplified contactome data",
+    )
+
     # Namespace: volume
-    volume_parser = subparsers.add_parser("volume", help="Commands related to volume computation")
+    volume_parser = subparsers.add_parser(
+        "volume", help="Commands related to volume computation"
+    )
     volume_subparsers = volume_parser.add_subparsers(dest="command", required=True)
 
     # Subcommand: generate (volume)
-    volume_generate_parser = volume_subparsers.add_parser("generate", help="Generate cuboidwise tasks for volume")
-    volume_generate_parser.add_argument("--graph-id", type=str, required=True,
-                                         help="Graph ID for processing")
-    volume_generate_parser.add_argument("--segmentation-channel", type=str, required=True,
-                                         help="S3 path to segmentation channel data")
-    volume_generate_parser.add_argument("--block-size-x", type=int, default=64,
-                                         help="Block size for X dimension")
-    volume_generate_parser.add_argument("--block-size-y", type=int, default=64,
-                                         help="Block size for Y dimension")
-    volume_generate_parser.add_argument("--block-size-z", type=int, default=32,
-                                         help="Block size for Z dimension")
-    volume_generate_parser.add_argument("--z-start", type=int, default=None,
-                                         help="Starting Z slice")
-    volume_generate_parser.add_argument("--z-end", type=int, default=None,
-                                         help="Ending Z slice")
-    volume_generate_parser.add_argument("--enqueue-limit", type=int, default=None,
-                                         help="Limit the number of tasks to enqueue")
+    volume_generate_parser = volume_subparsers.add_parser(
+        "generate", help="Generate cuboidwise tasks for volume"
+    )
+    volume_generate_parser.add_argument(
+        "--graph-id", type=str, required=True, help="Graph ID for processing"
+    )
+    volume_generate_parser.add_argument(
+        "--segmentation-channel",
+        type=str,
+        required=True,
+        help="S3 path to segmentation channel data",
+    )
+    volume_generate_parser.add_argument(
+        "--block-size-x", type=int, default=64, help="Block size for X dimension"
+    )
+    volume_generate_parser.add_argument(
+        "--block-size-y", type=int, default=64, help="Block size for Y dimension"
+    )
+    volume_generate_parser.add_argument(
+        "--block-size-z", type=int, default=32, help="Block size for Z dimension"
+    )
+    volume_generate_parser.add_argument(
+        "--z-start", type=int, default=None, help="Starting Z slice"
+    )
+    volume_generate_parser.add_argument(
+        "--z-end", type=int, default=None, help="Ending Z slice"
+    )
+    volume_generate_parser.add_argument(
+        "--enqueue-limit",
+        type=int,
+        default=None,
+        help="Limit the number of tasks to enqueue",
+    )
 
     # Subcommand: simplify (volume)
-    volume_simplify_parser = volume_subparsers.add_parser("simplify", help="Simplify volume raw export to edgelist CSV")
-    volume_simplify_parser.add_argument("--raw-file", type=str, required=True,
-                                         help="Path to CSV file with raw exported volume data (from `export` command)")
-    volume_simplify_parser.add_argument("--output-file", type=str, required=True,
-                                         help="Output file path for simplified volume data")
+    volume_simplify_parser = volume_subparsers.add_parser(
+        "simplify", help="Simplify volume raw export to edgelist CSV"
+    )
+    volume_simplify_parser.add_argument(
+        "--raw-file",
+        type=str,
+        required=True,
+        help="Path to CSV file with raw exported volume data (from `export` command)",
+    )
+    volume_simplify_parser.add_argument(
+        "--output-file",
+        type=str,
+        required=True,
+        help="Output file path for simplified volume data",
+    )
 
     # Namespace: export
     export_parser = subparsers.add_parser("export", help="Export results to CSV")
-    export_parser.add_argument("graph_id", type=str, help="Graph ID to export results for")
+    export_parser.add_argument(
+        "graph_id", type=str, help="Graph ID to export results for"
+    )
     export_parser.add_argument("output_file", type=str, help="Output CSV file path")
 
     # Namespace: dequeue
-    dequeue_parser = subparsers.add_parser("dequeue", help="Process a single job from the queue")
+    dequeue_parser = subparsers.add_parser(
+        "dequeue", help="Process a single job from the queue"
+    )
 
     return parser.parse_args()
 
@@ -315,7 +353,7 @@ def main():
 
     if args.namespace == "synapses":
         if args.command == "generate":
-            get_centroids_for_syn_mask(
+            export_synapse_mask_centroids_to_file(
                 synapse_channel=args.synapse_channel,
                 output_file=args.output_file,
                 mip=mip,
@@ -328,15 +366,15 @@ def main():
                 synapse_channel=args.synapse_channel,
                 segmentation_channel=args.segmentation_channel,
                 mip=mip,
-                enqueue_limit=args.enqueue_limit
+                enqueue_limit=args.enqueue_limit,
             )
         elif args.command == "simplify":
-            with open(args.raw_file, 'r') as infile:
+            with open(args.raw_file, "r") as infile:
                 simplify_synapse_data(
                     infile,
                     output_file=args.output_file,
                     invalid_nodes=args.invalid_nodes,
-                    simple=args.simple
+                    simple=args.simple,
                 )
     elif args.namespace == "contactome":
         if args.command == "generate":
@@ -350,14 +388,14 @@ def main():
                 block_size=block_size,
                 z_start=args.z_start,
                 z_end=args.z_end,
-                enqueue_limit=args.enqueue_limit
+                enqueue_limit=args.enqueue_limit,
             )
         elif args.command == "simplify":
-            with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
-                simplify_contactome_data(
-                    instream=infile,
-                    outstream=outfile
-                )
+            with (
+                open(args.raw_file, "r") as infile,
+                open(args.output_file, "w") as outfile,
+            ):
+                simplify_contactome_data(instream=infile, outstream=outfile)
     elif args.namespace == "volume":
         if args.command == "generate":
             block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
@@ -370,14 +408,14 @@ def main():
                 block_size=block_size,
                 z_start=args.z_start,
                 z_end=args.z_end,
-                enqueue_limit=args.enqueue_limit
+                enqueue_limit=args.enqueue_limit,
             )
         elif args.command == "simplify":
-            with open(args.raw_file, 'r') as infile, open(args.output_file, 'w') as outfile:
-                simplify_volume_data(
-                    instream=infile,
-                    outstream=outfile
-                )
+            with (
+                open(args.raw_file, "r") as infile,
+                open(args.output_file, "w") as outfile,
+            ):
+                simplify_volume_data(instream=infile, outstream=outfile)
     elif args.namespace == "export":
         export_dynamodb_results_to_csv(args.graph_id, args.output_file)
     elif args.namespace == "dequeue":

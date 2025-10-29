@@ -1,17 +1,27 @@
 import argparse
 from functools import partial
-
-from database import ContactomeEdgeTaskPayload, TaskType, VolumeTaskPayload
+import sqlite3
 from tqdm import tqdm
 from taskqueue import TaskQueue, queueable
+
+from database import (
+    ContactomeEdgeTaskPayload,
+    SynapseEdgeTaskPayload,
+    TaskType,
+    VolumeTaskPayload,
+)
+from shared_cuboid_utils import generate_cuboidwise_tasks
+from shared_synapse_utils import (
+    generate_centroidwise_tasks,
+    export_synapse_mask_centroids_to_file,
+)
 from shared_utils import (
     _attach_contactome_parser,
     _attach_global_arguments,
+    _attach_synapse_parser,
     _parse_mip_argument,
-    generate_cuboidwise_tasks,
 )
-from cloudome import return_ctc_edges
-import sqlite3
+from cloudome import return_ctc_edges, return_seg_edge
 
 QUEUE_LEASE_SECONDS = 60 * 5  # 5 minutes
 
@@ -38,13 +48,34 @@ def _process_contactome_task(
             INSERT INTO contactome_edges (graph_id, location, pre, post, weight)
             VALUES (?, ?, ?, ?, ?)
             """,
-            (task_payload["graph_id"], location_str, seg_a, seg_b, weight),
+            (task_payload["graph_id"], location_str, str(seg_a), str(seg_b), weight),
         )
     conn.commit()
     conn.close()
 
 
-def provision(sqlite_db_path: str):
+@queueable
+def _process_synapse_task(task_payload: SynapseEdgeTaskPayload, sqlite_db_path: str):
+    """Thin wrapper to process a synapse task inside a queueable."""
+    edge = return_seg_edge(task_payload)
+    # Assume table `synapse_edges` exists with columns:
+    # graph_id  # string, like "foo"
+    # pre       # u64
+    # post      # u64
+    conn = sqlite3.connect(sqlite_db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        INSERT INTO synapse_edges (graph_id, pre, post)
+        VALUES (?, ?, ?)
+        """,
+        (task_payload["graph_id"], str(edge[0]), str(edge[1])),
+    )
+    conn.commit()
+    conn.close()
+
+
+def provision_db_contactome(sqlite_db_path: str):
     """Provision the local SQLite database."""
     conn = sqlite3.connect(sqlite_db_path)
     cursor = conn.cursor()
@@ -54,8 +85,8 @@ def provision(sqlite_db_path: str):
         CREATE TABLE IF NOT EXISTS contactome_edges (
             graph_id TEXT,
             location TEXT,
-            pre INTEGER,
-            post INTEGER,
+            pre TEXT,
+            post TEXT,
             weight INTEGER,
             PRIMARY KEY (graph_id, location, pre, post)
         )
@@ -65,7 +96,26 @@ def provision(sqlite_db_path: str):
     conn.close()
 
 
-def generate_cuboidwise_tasks_for_contactome_or_volume(
+def provision_db_synapses(sqlite_db_path: str):
+    """Provision the local SQLite database for synapse edges."""
+    conn = sqlite3.connect(sqlite_db_path)
+    cursor = conn.cursor()
+    # Create table for synapse edges
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS synapse_edges (
+            graph_id TEXT,
+            pre TEXT,
+            post TEXT,
+            PRIMARY KEY (graph_id, pre, post)
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
+def enqueue_cuboidwise_tasks_for_contactome_or_volume(
     fq_url: str,
     graph_id: str,
     task_type: TaskType,
@@ -100,7 +150,42 @@ def generate_cuboidwise_tasks_for_contactome_or_volume(
         )
 
 
-def run_contactome_worker(
+def enqueue_centroids_from_file(
+    fq_url: str,
+    graph_id: str,
+    filename: str,
+    synapse_channel: str,
+    segmentation_channel: str,
+    mip: list | int,
+    sqlite_db_path: str,
+    enqueue_limit: int = None,
+):
+    """
+    Read centroids from a file and enqueue them to SQS for processing.
+    """
+    tq = TaskQueue(fq_url)
+    for i, payload in enumerate(
+        tqdm(
+            generate_centroidwise_tasks(
+                graph_id=graph_id,
+                filename=filename,
+                synapse_channel=synapse_channel,
+                segmentation_channel=segmentation_channel,
+                mip=mip,
+                enqueue_limit=enqueue_limit,
+            )
+        )
+    ):
+        tq.insert(
+            partial(
+                _process_synapse_task,
+                task_payload=payload,
+                sqlite_db_path=sqlite_db_path,
+            )
+        )
+
+
+def run_worker(
     fq_url: str, verbose: bool = False, tally: bool = True, max_tasks: int | None = None
 ):
     tq = TaskQueue(fq_url)
@@ -125,6 +210,7 @@ def parse_arguments():
 
     subparsers = parser.add_subparsers(dest="namespace", required=True)
     _attach_contactome_parser(subparsers)
+    _attach_synapse_parser(subparsers)
 
     # Support `worker --jobs N` to run a worker for a specific namespace
     worker_parser = subparsers.add_parser("worker", help="Run a task worker")
@@ -150,26 +236,47 @@ def parse_arguments():
 
 def main():
     args = parse_arguments()
-    args.mip = _parse_mip_argument(args.mip)
+    mip = _parse_mip_argument(args.mip)
 
     if args.namespace == "contactome":
         if args.command == "generate":
             block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
-            provision(args.sqlite_db_path)
-            generate_cuboidwise_tasks_for_contactome_or_volume(
+            provision_db_contactome(args.sqlite_db_path)
+            enqueue_cuboidwise_tasks_for_contactome_or_volume(
                 fq_url=args.queue_url,
                 graph_id=args.graph_id,
                 task_type="contactome",
                 segmentation_channel=args.segmentation_channel,
                 sqlite_db_path=args.sqlite_db_path,
-                mip=args.mip,
+                mip=mip,
                 block_size=block_size,
                 z_start=args.z_start,
                 z_end=args.z_end,
                 enqueue_limit=args.enqueue_limit,
             )
+
+    elif args.namespace == "synapses":
+        if args.command == "generate":
+            export_synapse_mask_centroids_to_file(
+                synapse_channel=args.synapse_channel,
+                output_file=args.output_file,
+                mip=mip,
+            )
+        elif args.command == "enqueue":
+            provision_db_synapses(args.sqlite_db_path)
+            enqueue_centroids_from_file(
+                fq_url=args.queue_url,
+                graph_id=args.graph_id,
+                filename=args.centroids_file,
+                sqlite_db_path=args.sqlite_db_path,
+                synapse_channel=args.synapse_channel,
+                segmentation_channel=args.segmentation_channel,
+                mip=mip,
+                enqueue_limit=args.enqueue_limit,
+            )
+
     elif args.namespace == "worker":
-        run_contactome_worker(
+        run_worker(
             fq_url=args.queue_url,
             verbose=args.verbose,
             tally=args.tally,

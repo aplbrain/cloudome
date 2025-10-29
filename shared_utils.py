@@ -1,61 +1,4 @@
 import argparse
-from intern.utils.parallel import block_compute
-from cloudvolume import CloudVolume
-from tqdm import tqdm
-
-
-from database import TaskType
-
-
-def generate_cuboidwise_tasks(
-    graph_id: str,
-    task_type: TaskType,
-    segmentation_channel: str,
-    mip: list | int,
-    block_size: tuple = (64, 64, 64),
-    z_start: int = None,
-    z_end: int = None,
-    enqueue_limit: int = None,
-):
-    # Create a file with each line being a cuboid start and radius
-    seg_data = CloudVolume(segmentation_channel, mip=mip, cache=True)
-
-    if z_end:
-        z_end = z_end if z_end < int(seg_data.shape[2]) else int(seg_data.shape[2])
-    else:
-        z_end = int(seg_data.shape[2])
-
-    blocks = block_compute(
-        x_start=0,
-        x_stop=int(seg_data.shape[0]),
-        y_start=0,
-        y_stop=int(seg_data.shape[1]),
-        z_start=z_start or 0,
-        z_stop=z_end,
-        block_size=block_size,
-    )
-
-    # if enqueue_limit:
-    #     print(f"Queueing {min(len(blocks), enqueue_limit)} blocks")
-    # else:
-    #     print(f"Queueing {len(blocks)} blocks")
-
-    for i, ((x_start, x_stop), (y_start, y_stop), (z_start, z_stop)) in enumerate(
-        blocks
-    ):
-        if enqueue_limit is not None and i >= enqueue_limit:
-            break
-
-        # enqueue a ContactomeEdgeTaskPayload
-        payload = {
-            "graph_id": graph_id,
-            "task_type": task_type,
-            "cuboid_start": (x_start, y_start, z_start),
-            "cuboid_radius": (x_stop - x_start, y_stop - y_start, z_stop - z_start),
-            "segmentation_channel": segmentation_channel,
-            "mip": mip,
-        }  # ContactomeEdgeTaskPayload | VolumeTaskPayload
-        yield payload
 
 
 def _parse_mip_argument(mip_arg: str) -> list | int:
@@ -135,12 +78,67 @@ def _attach_contactome_parser(subparsers: argparse._SubParsersAction):
         default=None,
         help="Limit the number of tasks to enqueue",
     )
-    return contactome_parser, contactome_subparsers, contactome_generate_parser
+    return contactome_parser, contactome_subparsers, (contactome_generate_parser,)
+
+
+def _attach_synapse_parser(subparsers: argparse._SubParsersAction):
+    synapses_parser = subparsers.add_parser(
+        "synapses", help="Commands related to synapses"
+    )
+    synapses_subparsers = synapses_parser.add_subparsers(dest="command", required=True)
+
+    # Subcommand: generate (synapses)
+    syn_generate_parser = synapses_subparsers.add_parser(
+        "generate", help="Generate centroids for synapse mask"
+    )
+    syn_generate_parser.add_argument(
+        "--synapse-channel",
+        type=str,
+        required=True,
+        help="S3 path to synapse channel data",
+    )
+    syn_generate_parser.add_argument(
+        "--output-file",
+        type=str,
+        default="centroids.csv",
+        help="Output file path for centroids",
+    )
+
+    # Subcommand: enqueue (synapses)
+    enqueue_parser = synapses_subparsers.add_parser(
+        "enqueue", help="Enqueue centroids from file"
+    )
+    enqueue_parser.add_argument(
+        "--graph-id", type=str, required=True, help="Graph ID for processing"
+    )
+    enqueue_parser.add_argument(
+        "--centroids-file", type=str, required=True, help="Path to centroids file"
+    )
+    enqueue_parser.add_argument(
+        "--synapse-channel",
+        type=str,
+        required=True,
+        help="S3 path to synapse channel data",
+    )
+    enqueue_parser.add_argument(
+        "--segmentation-channel",
+        type=str,
+        required=True,
+        help="S3 path to segmentation channel data",
+    )
+    enqueue_parser.add_argument(
+        "--enqueue-limit",
+        type=int,
+        default=None,
+        help="Limit the number of centroids to enqueue",
+    )
+
+    return synapses_parser, synapses_subparsers, (syn_generate_parser, enqueue_parser)
 
 
 __all__ = [
-    "generate_cuboidwise_tasks",
     "_parse_mip_argument",
     "_attach_global_arguments",
     "_attach_contactome_parser",
+    "_attach_synapse_parser",
 ]
