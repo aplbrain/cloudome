@@ -24,8 +24,18 @@ uv run local_manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss
 uv run local_manage.py --sqlite-db-path synapse_edges_test0.db synapses enqueue --graph-id connectome-test0 --centroids-file synapse-centroids-test0.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
 ```
 
+### Sharding SQLite DB
+
+On highly parallel systems such as shared-filesystem clusters, you will likely want to shard the sqlite DB. Pass `--shard-sqlite` to any command that takes a database path (e.g. `--sqlite-db-path synapse_edges_test0.db --shard-sqlite`). This will create a unique sqlite DB per worker process.
+
 ## Running workers
 
 ```bash
-uv run local_manage.py worker --jobs 1
+uv run local_manage.py worker
+```
+
+You can also limit the number of tasks processed by each worker for testing purposes:
+
+```bash
+uv run local_manage.py worker --dequeue-limit 10
 ```

@@ -1,6 +1,11 @@
 import argparse
+import datetime
 from functools import partial
+import os
+import socket
 import sqlite3
+from pathlib import Path
+
 from tqdm import tqdm
 from taskqueue import TaskQueue, queueable
 
@@ -24,6 +29,9 @@ from shared_utils import (
 from cloudome import return_ctc_edges, return_seg_edge
 
 QUEUE_LEASE_SECONDS = 60 * 5  # 5 minutes
+_SQLITE_SHARDING_ENABLED = False
+_SQLITE_SHARD_SUFFIX: str | None = None
+_SQLITE_PATH_CACHE: dict[str, str] = {}
 
 
 @queueable
@@ -31,6 +39,7 @@ def _process_contactome_task(
     task_payload: ContactomeEdgeTaskPayload, sqlite_db_path: str
 ):
     """Thin wrapper to process a contactome task inside a queueable."""
+    sqlite_db_path = _resolve_sqlite_path(sqlite_db_path)
     edges = return_ctc_edges(task_payload)
     # save to sqlite db
     conn = sqlite3.connect(sqlite_db_path)
@@ -41,6 +50,18 @@ def _process_contactome_task(
     # post      # u64
     # weight    # u64
     cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS contactome_edges (
+            graph_id TEXT,
+            location TEXT,
+            pre TEXT,
+            post TEXT,
+            weight INTEGER,
+            PRIMARY KEY (graph_id, location, pre, post)
+        )
+        """
+    )
     for (seg_a, seg_b), weight in edges.items():
         location_str = f"ctc_x{task_payload['cuboid_start'][0]}_y{task_payload['cuboid_start'][1]}_z{task_payload['cuboid_start'][2]}"
         cursor.execute(
@@ -57,6 +78,7 @@ def _process_contactome_task(
 @queueable
 def _process_synapse_task(task_payload: SynapseEdgeTaskPayload, sqlite_db_path: str):
     """Thin wrapper to process a synapse task inside a queueable."""
+    sqlite_db_path = _resolve_sqlite_path(sqlite_db_path)
     edge = return_seg_edge(task_payload)
     # Assume table `synapse_edges` exists with columns:
     # graph_id  # string, like "foo"
@@ -64,6 +86,16 @@ def _process_synapse_task(task_payload: SynapseEdgeTaskPayload, sqlite_db_path: 
     # post      # u64
     conn = sqlite3.connect(sqlite_db_path)
     cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS synapse_edges (
+            graph_id TEXT,
+            pre TEXT,
+            post TEXT,
+            PRIMARY KEY (graph_id, pre, post)
+        )
+        """
+    )
     cursor.execute(
         """
         INSERT INTO synapse_edges (graph_id, pre, post)
@@ -77,7 +109,7 @@ def _process_synapse_task(task_payload: SynapseEdgeTaskPayload, sqlite_db_path: 
 
 def provision_db_contactome(sqlite_db_path: str):
     """Provision the local SQLite database."""
-    conn = sqlite3.connect(sqlite_db_path)
+    conn = sqlite3.connect(_resolve_sqlite_path(sqlite_db_path))
     cursor = conn.cursor()
     # Create table for contactome edges
     cursor.execute(
@@ -98,7 +130,7 @@ def provision_db_contactome(sqlite_db_path: str):
 
 def provision_db_synapses(sqlite_db_path: str):
     """Provision the local SQLite database for synapse edges."""
-    conn = sqlite3.connect(sqlite_db_path)
+    conn = sqlite3.connect(_resolve_sqlite_path(sqlite_db_path))
     cursor = conn.cursor()
     # Create table for synapse edges
     cursor.execute(
@@ -186,7 +218,10 @@ def enqueue_centroids_from_file(
 
 
 def run_worker(
-    fq_url: str, verbose: bool = False, tally: bool = True, max_tasks: int | None = None
+    fq_url: str,
+    verbose: bool = False,
+    tally: bool = True,
+    max_tasks: int | None = None,
 ):
     tq = TaskQueue(fq_url)
     tq.poll(
@@ -207,12 +242,16 @@ def parse_arguments():
         default="cloudome-results.db",
         help="Path to the local SQLite database for task tracking",
     )
+    parser.add_argument(
+        "--shard-sqlite",
+        action="store_true",
+        help="Use a worker-specific shard of the SQLite database to reduce lock contention",
+    )
 
     subparsers = parser.add_subparsers(dest="namespace", required=True)
     _attach_contactome_parser(subparsers)
     _attach_synapse_parser(subparsers)
 
-    # Support `worker --jobs N` to run a worker for a specific namespace
     worker_parser = subparsers.add_parser("worker", help="Run a task worker")
     worker_parser.add_argument(
         "--verbose",
@@ -225,7 +264,7 @@ def parse_arguments():
         help="Enable task tallying for the worker",
     )
     worker_parser.add_argument(
-        "--jobs",
+        "--dequeue-limit",
         type=int,
         default=None,
         help="Maximum number of tasks to process before exiting",
@@ -237,6 +276,9 @@ def parse_arguments():
 def main():
     args = parse_arguments()
     mip = _parse_mip_argument(args.mip)
+
+    if args.shard_sqlite:
+        _enable_sqlite_sharding()
 
     if args.namespace == "contactome":
         if args.command == "generate":
@@ -280,9 +322,39 @@ def main():
             fq_url=args.queue_url,
             verbose=args.verbose,
             tally=args.tally,
-            max_tasks=args.jobs,
+            max_tasks=args.dequeue_limit,
         )
 
 
 if __name__ == "__main__":
     main()
+
+
+def _enable_sqlite_sharding():
+    global _SQLITE_SHARDING_ENABLED, _SQLITE_SHARD_SUFFIX
+    if _SQLITE_SHARDING_ENABLED:
+        return
+    host = socket.gethostname().replace(".", "-")
+    pid = os.getpid()
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+    _SQLITE_SHARD_SUFFIX = f"{host}-{pid}-{timestamp}"
+    _SQLITE_SHARDING_ENABLED = True
+
+
+def _resolve_sqlite_path(sqlite_db_path: str) -> str:
+    if not _SQLITE_SHARDING_ENABLED:
+        return sqlite_db_path
+    cached = _SQLITE_PATH_CACHE.get(sqlite_db_path)
+    if cached:
+        return cached
+    suffix = _SQLITE_SHARD_SUFFIX or "shard"
+    path = Path(sqlite_db_path)
+    parent = path.parent if path.parent != Path("") else Path(".")
+    parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix:
+        resolved = parent / f"{path.stem}.{suffix}{path.suffix}"
+    else:
+        resolved = parent / f"{path.name}.{suffix}"
+    resolved_path = str(resolved)
+    _SQLITE_PATH_CACHE[sqlite_db_path] = resolved_path
+    return resolved_path
