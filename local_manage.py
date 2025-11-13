@@ -273,6 +273,36 @@ def parse_arguments():
     return parser.parse_args()
 
 
+def _enable_sqlite_sharding():
+    global _SQLITE_SHARDING_ENABLED, _SQLITE_SHARD_SUFFIX
+    if _SQLITE_SHARDING_ENABLED:
+        return
+    host = socket.gethostname().replace(".", "-")
+    pid = os.getpid()
+    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
+    _SQLITE_SHARD_SUFFIX = f"{host}-{pid}-{timestamp}"
+    _SQLITE_SHARDING_ENABLED = True
+
+
+def _resolve_sqlite_path(sqlite_db_path: str) -> str:
+    if not _SQLITE_SHARDING_ENABLED:
+        return sqlite_db_path
+    cached = _SQLITE_PATH_CACHE.get(sqlite_db_path)
+    if cached:
+        return cached
+    suffix = _SQLITE_SHARD_SUFFIX or "shard"
+    path = Path(sqlite_db_path)
+    parent = path.parent if path.parent != Path("") else Path(".")
+    parent.mkdir(parents=True, exist_ok=True)
+    if path.suffix:
+        resolved = parent / f"{path.stem}.{suffix}{path.suffix}"
+    else:
+        resolved = parent / f"{path.name}.{suffix}"
+    resolved_path = str(resolved)
+    _SQLITE_PATH_CACHE[sqlite_db_path] = resolved_path
+    return resolved_path
+
+
 def main():
     args = parse_arguments()
     mip = _parse_mip_argument(args.mip)
@@ -328,33 +358,3 @@ def main():
 
 if __name__ == "__main__":
     main()
-
-
-def _enable_sqlite_sharding():
-    global _SQLITE_SHARDING_ENABLED, _SQLITE_SHARD_SUFFIX
-    if _SQLITE_SHARDING_ENABLED:
-        return
-    host = socket.gethostname().replace(".", "-")
-    pid = os.getpid()
-    timestamp = datetime.datetime.now(datetime.timezone.utc).strftime("%Y%m%d%H%M%S")
-    _SQLITE_SHARD_SUFFIX = f"{host}-{pid}-{timestamp}"
-    _SQLITE_SHARDING_ENABLED = True
-
-
-def _resolve_sqlite_path(sqlite_db_path: str) -> str:
-    if not _SQLITE_SHARDING_ENABLED:
-        return sqlite_db_path
-    cached = _SQLITE_PATH_CACHE.get(sqlite_db_path)
-    if cached:
-        return cached
-    suffix = _SQLITE_SHARD_SUFFIX or "shard"
-    path = Path(sqlite_db_path)
-    parent = path.parent if path.parent != Path("") else Path(".")
-    parent.mkdir(parents=True, exist_ok=True)
-    if path.suffix:
-        resolved = parent / f"{path.stem}.{suffix}{path.suffix}"
-    else:
-        resolved = parent / f"{path.name}.{suffix}"
-    resolved_path = str(resolved)
-    _SQLITE_PATH_CACHE[sqlite_db_path] = resolved_path
-    return resolved_path
