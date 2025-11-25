@@ -1,9 +1,10 @@
 import os
 import json
+from typing import Any, cast
+
 import numpy as np
 from flask import Flask
 from database import (
-    SynapseEdgeTask,
     SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
     SynapseEdgeResultsModel,
@@ -15,11 +16,34 @@ import cc3d
 import math
 from collections import Counter
 
-os.environ['CLOUD_VOLUME_DIR'] = '/tmp/cloudvolume'
-os.makedirs('/tmp/cloudvolume', exist_ok=True)
 from cloudvolume import CloudVolume
 
+os.environ['CLOUD_VOLUME_DIR'] = '/tmp/cloudvolume'
+os.makedirs('/tmp/cloudvolume', exist_ok=True)
+
 SegmentID = int
+ContactPair = tuple[SegmentID, SegmentID]
+
+
+def _vec3_from_any(value: Any) -> tuple[int, int, int]:
+    """Best-effort conversion of a CloudVolume Vec/Bbox component to integer xyz tuple."""
+    try:
+        iterable = list(value)  # type: ignore[arg-type]
+    except TypeError:
+        iterable = [
+            getattr(value, "x"),
+            getattr(value, "y"),
+            getattr(value, "z"),
+        ]
+    if len(iterable) < 3:
+        raise ValueError("Expected a three-component vector.")
+    return (int(iterable[0]), int(iterable[1]), int(iterable[2]))
+
+
+def _bbox_min_max(bounds: Any) -> tuple[tuple[int, int, int], tuple[int, int, int]]:
+    minpt = getattr(bounds, "minpt")
+    maxpt = getattr(bounds, "maxpt")
+    return _vec3_from_any(minpt), _vec3_from_any(maxpt)
 
 app = Flask(__name__)
 
@@ -36,21 +60,36 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
     xyz_center = task['centroid_xyz']
     try:
         # Get the CloudVolume dimensions
-        synapse_volume = CloudVolume(task['synapse_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])
-        segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, cache=False, secrets="", mip=task['mip'])
+        synapse_volume = CloudVolume(
+            task['synapse_channel'], use_https=True, cache=False, secrets="",
+            mip=cast(Any, task['mip']), fill_missing=True
+        )
+        segmentation_volume = CloudVolume(
+            task['segmentation_channel'], use_https=True, cache=False, secrets="",
+            mip=cast(Any, task['mip']), fill_missing=True
+        )
 
-        # Calculate bounding box
-        bounds = synapse_volume.shape
-        x_min, x_max = max(0, xyz_center[0] - RADIUS), min(bounds[0], xyz_center[0] + RADIUS)
-        y_min, y_max = max(0, xyz_center[1] - RADIUS), min(bounds[1], xyz_center[1] + RADIUS)
-        z_min, z_max = max(0, xyz_center[2] - RADIUS), min(bounds[2], xyz_center[2] + RADIUS)
+        # Calculate bounding box respecting voxel offsets
+        syn_min, syn_max = _bbox_min_max(getattr(synapse_volume, "bounds"))
+        seg_min, seg_max = _bbox_min_max(getattr(segmentation_volume, "bounds"))
+
+        x_min = max(syn_min[0], seg_min[0], int(xyz_center[0] - RADIUS))
+        x_max = min(syn_max[0], seg_max[0], int(xyz_center[0] + RADIUS))
+        y_min = max(syn_min[1], seg_min[1], int(xyz_center[1] - RADIUS))
+        y_max = min(syn_max[1], seg_max[1], int(xyz_center[1] + RADIUS))
+        z_min = max(syn_min[2], seg_min[2], int(xyz_center[2] - RADIUS))
+        z_max = min(syn_max[2], seg_max[2], int(xyz_center[2] + RADIUS))
 
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
             raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
 
         # Pull volumes inside bounding box for both synapse and segmentation paint
-        prepost_mask = synapse_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
-        seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
+        prepost_mask = np.asarray(
+            cast(Any, synapse_volume)[x_min:x_max, y_min:y_max, z_min:z_max, 0]
+        ).squeeze()
+        seg_mask = np.asarray(
+            cast(Any, segmentation_volume)[x_min:x_max, y_min:y_max, z_min:z_max, 0]
+        ).squeeze()
 
         # Count seg voxels per id in pre, get ID with most common count => pre_id
         vals, counts = np.unique(seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True)
@@ -116,17 +155,17 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         print(f"[ERROR]\t{e}")
         return -1, -1
 
-def count_contact_voxels(segmentation, resolution):
+def count_contact_voxels(segmentation, resolution) -> dict[ContactPair, int]:
     contacts = cc3d.contacts(segmentation,
                              connectivity=6,
                              anisotropy=tuple(resolution), 
                              surface_area=True
     )
-    return contacts
+    return cast(dict[ContactPair, int], contacts)
 
 def remove_contact_overlap(
-    contact_counts: dict[tuple[SegmentID], int],
-    counts_to_remove: list[dict[tuple[SegmentID], int]]
+    contact_counts: dict[ContactPair, int],
+    counts_to_remove: list[dict[ContactPair, int]]
 ):
     final_contacts = contact_counts
     for count_to_remove in counts_to_remove:
@@ -145,53 +184,78 @@ def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
 
     return volume_counts
 
-def return_ctc_edges(task: ContactomeEdgeTaskPayload):
+def return_ctc_edges(task: ContactomeEdgeTaskPayload) -> dict[ContactPair, int]:
     xyz_start = task['cuboid_start']
     xyz_radius = task['cuboid_radius']
     try:
         # Get the CloudVolume dimensions
-        segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, parallel=False, cache=False, secrets="", mip=task['mip'])
+        segmentation_volume = CloudVolume(
+            task['segmentation_channel'], use_https=True, parallel=False,
+            cache=False, secrets="", mip=cast(Any, task['mip']), fill_missing=True
+        )
 
-        bounds = segmentation_volume.shape
-        
+        bounds_min, bounds_max = _bbox_min_max(getattr(segmentation_volume, "bounds"))
+
         # Add +1 to each leading edge coord so that contacts with adjacent cuboids are properly recorded
-        x_min, x_max = max(0, xyz_start[0]), min(bounds[0], xyz_start[0] + xyz_radius[0] + 1)
-        y_min, y_max = max(0, xyz_start[1]), min(bounds[1], xyz_start[1] + xyz_radius[1] + 1)
-        z_min, z_max = max(0, xyz_start[2]), min(bounds[2], xyz_start[2] + xyz_radius[2] + 1)
+        x_min = max(bounds_min[0], int(xyz_start[0]))
+        x_requested_max = int(xyz_start[0] + xyz_radius[0] + 1)
+        x_max = min(bounds_max[0], x_requested_max)
+
+        y_min = max(bounds_min[1], int(xyz_start[1]))
+        y_requested_max = int(xyz_start[1] + xyz_radius[1] + 1)
+        y_max = min(bounds_max[1], y_requested_max)
+
+        z_min = max(bounds_min[2], int(xyz_start[2]))
+        z_requested_max = int(xyz_start[2] + xyz_radius[2] + 1)
+        z_max = min(bounds_max[2], z_requested_max)
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
             raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
-        seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
+        seg_mask = np.asarray(
+            cast(Any, segmentation_volume)[x_min:x_max, y_min:y_max, z_min:z_max, 0]
+        ).squeeze()
 
         # Generate contacts for whole volume
-        initial_contact_counts = count_contact_voxels(seg_mask, segmentation_volume.resolution)
+        resolution = _vec3_from_any(getattr(segmentation_volume, "resolution"))
+        initial_contact_counts = count_contact_voxels(seg_mask, resolution)
 
         # Remove doubly-counted contacts at the edges
-        o_x = count_contact_voxels(seg_mask[-1:, :, :], segmentation_volume.resolution)
-        o_y = count_contact_voxels(seg_mask[:, -1:, :], segmentation_volume.resolution)
-        o_z = count_contact_voxels(seg_mask[:, :, -1:], segmentation_volume.resolution)
+        o_x = count_contact_voxels(seg_mask[-1:, :, :], resolution)
+        o_y = count_contact_voxels(seg_mask[:, -1:, :], resolution)
+        o_z = count_contact_voxels(seg_mask[:, :, -1:], resolution)
         final_contact_counts = remove_contact_overlap(initial_contact_counts, [o_x, o_y, o_z])
         
         return final_contact_counts
     except Exception as e:
-        print(f"[ERROR]\t[ctc] {e}")
-        return dict[tuple[SegmentID], int]()
+        # print(f"[ERROR]\t[ctc] {e}")
+        # Verbose:
+        print(f"[ERROR]\t[ctc]. Exception traceback: {e}\n{type(e)}\t{e.args}")
+
+        return {}
 
 def return_volume_counts(task: VolumeTaskPayload):
     xyz_start = task['cuboid_start']
     xyz_radius = task['cuboid_radius']
     try:
         # Get the CloudVolume dimensions
-        segmentation_volume = CloudVolume(task['segmentation_channel'], use_https=True, parallel=False, cache=False, secrets="", mip=task['mip'])
+        segmentation_volume = CloudVolume(
+            task['segmentation_channel'], use_https=True, parallel=False,
+            cache=False, secrets="", mip=cast(Any, task['mip']), fill_missing=True
+        )
 
-        bounds = segmentation_volume.shape
-        x_min, x_max = max(0, xyz_start[0]), min(bounds[0], xyz_start[0] + xyz_radius[0])
-        y_min, y_max = max(0, xyz_start[1]), min(bounds[1], xyz_start[1] + xyz_radius[1])
-        z_min, z_max = max(0, xyz_start[2]), min(bounds[2], xyz_start[2] + xyz_radius[2])
+        bounds_min, bounds_max = _bbox_min_max(getattr(segmentation_volume, "bounds"))
+        x_min = max(bounds_min[0], int(xyz_start[0]))
+        x_max = min(bounds_max[0], int(xyz_start[0] + xyz_radius[0]))
+        y_min = max(bounds_min[1], int(xyz_start[1]))
+        y_max = min(bounds_max[1], int(xyz_start[1] + xyz_radius[1]))
+        z_min = max(bounds_min[2], int(xyz_start[2]))
+        z_max = min(bounds_max[2], int(xyz_start[2] + xyz_radius[2]))
 
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
             raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
 
-        seg_mask = segmentation_volume[x_min:x_max, y_min:y_max, z_min:z_max, 0].squeeze()
+        seg_mask = np.asarray(
+            cast(Any, segmentation_volume)[x_min:x_max, y_min:y_max, z_min:z_max, 0]
+        ).squeeze()
 
         volume_counts = count_volume_voxels(seg_mask)
         return volume_counts
