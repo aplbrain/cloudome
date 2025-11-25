@@ -66,3 +66,15 @@ uv run python3 scripts/simplify_contactome_sqlite_db.py \
 Omit `--in-place` to write a new `*_simplified.db` alongside the source file,
 or pass `--output-db /tmp/contactome_simple.db --force` to control the output
 path explicitly.
+
+## Merge sqlite db shards
+
+If you have a set of sharded sqlite db files (e.g. produced by workers with
+`--shard-sqlite`), you can merge them into a single sqlite db file using:
+
+```bash
+uv run scripts/merge_sqlite_dbs.py --out /path/to/merged.db --dir /path/to/sharded/dbs/
+```
+
+This will scan the specified directory for all `.db` files and merge the components into a single output database.
+
