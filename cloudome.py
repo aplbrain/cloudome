@@ -18,8 +18,8 @@ from collections import Counter
 
 from cloudvolume import CloudVolume
 
-os.environ['CLOUD_VOLUME_DIR'] = '/tmp/cloudvolume'
-os.makedirs('/tmp/cloudvolume', exist_ok=True)
+os.environ["CLOUD_VOLUME_DIR"] = "/tmp/cloudvolume"
+os.makedirs("/tmp/cloudvolume", exist_ok=True)
 
 SegmentID = int
 ContactPair = tuple[SegmentID, SegmentID]
@@ -45,7 +45,9 @@ def _bbox_min_max(bounds: Any) -> tuple[tuple[int, int, int], tuple[int, int, in
     maxpt = getattr(bounds, "maxpt")
     return _vec3_from_any(minpt), _vec3_from_any(maxpt)
 
+
 app = Flask(__name__)
+
 
 @app.route("/")
 def _():
@@ -56,17 +58,26 @@ RADIUS = 10
 PRESYNAPTIC = 2
 POSTSYNAPTIC = 1
 
+
 def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]:
-    xyz_center = task['centroid_xyz']
+    xyz_center = task["centroid_xyz"]
     try:
         # Get the CloudVolume dimensions
         synapse_volume = CloudVolume(
-            task['synapse_channel'], use_https=True, cache=False, secrets="",
-            mip=cast(Any, task['mip']), fill_missing=True
+            task["synapse_channel"],
+            use_https=True,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
         )
         segmentation_volume = CloudVolume(
-            task['segmentation_channel'], use_https=True, cache=False, secrets="",
-            mip=cast(Any, task['mip']), fill_missing=True
+            task["segmentation_channel"],
+            use_https=True,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
         )
 
         # Calculate bounding box respecting voxel offsets
@@ -81,7 +92,9 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         z_max = min(syn_max[2], seg_max[2], int(xyz_center[2] + RADIUS))
 
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
-            raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
+            raise ValueError(
+                "Slicing range is invalid due to out-of-bounds coordinates."
+            )
 
         # Pull volumes inside bounding box for both synapse and segmentation paint
         prepost_mask = np.asarray(
@@ -92,7 +105,9 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         ).squeeze()
 
         # Count seg voxels per id in pre, get ID with most common count => pre_id
-        vals, counts = np.unique(seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True)
+        vals, counts = np.unique(
+            seg_mask[prepost_mask == PRESYNAPTIC], return_counts=True
+        )
         unique_counts = zip(counts, vals)
         unique_counts = sorted(unique_counts, reverse=True)
         counts, vals = zip(*unique_counts)
@@ -105,13 +120,13 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
                 pre_max_id = vals[1]
             elif pre_max_id == 0:
                 raise ValueError("The only presynaptic ID returned is 0.")
-        
+
         # Subsample PSD voxels to only the one we care about
         labels_out, N = cc3d.connected_components(prepost_mask, return_N=True)
         stats = cc3d.statistics(labels_out)
         distance = math.inf
         label = -1
-        for i, syn_centroid in enumerate(stats['centroids']):
+        for i, syn_centroid in enumerate(stats["centroids"]):
             temp_distance = math.dist(syn_centroid, [RADIUS, RADIUS, RADIUS])
             if temp_distance < distance:
                 distance = temp_distance
@@ -126,7 +141,9 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         counts, vals = zip(*unique_counts)
         # Error handling for 0 case
         if len(vals) == 0:
-            raise ValueError("No postsynaptic ID pixels found at {}.".format(xyz_center))
+            raise ValueError(
+                "No postsynaptic ID pixels found at {}.".format(xyz_center)
+            )
         else:
             post_max_id = vals[0]
             # Throw out id zero and presyn id if they are in indices 0 and/or 1
@@ -135,16 +152,20 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
                 if (post_max_id == 0 or post_max_id == pre_max_id) and len(vals) > 2:
                     post_max_id = vals[2]
             # If no postsynaptic ID is found, add in contact voxels
-            if (post_max_id == 0 or post_max_id == pre_max_id):
+            if post_max_id == 0 or post_max_id == pre_max_id:
                 label_mask_encoding = 1
-                label_mask = (labels_out == label)
-                masked_synapse_seg_vol = seg_mask 
+                label_mask = labels_out == label
+                masked_synapse_seg_vol = seg_mask
                 masked_synapse_seg_vol[label_mask] = label_mask_encoding
                 contacts = cc3d.contacts(masked_synapse_seg_vol, connectivity=26)
                 max_contact = 0
                 max_contact_id = -1
                 for contact in contacts:
-                    if (label_mask_encoding in contact) and (pre_max_id not in contact) and (contacts[contact] > max_contact):
+                    if (
+                        (label_mask_encoding in contact)
+                        and (pre_max_id not in contact)
+                        and (contacts[contact] > max_contact)
+                    ):
                         max_contact = contacts[contact]
                         max_contact_id = contact[1]
                 post_max_id = max_contact_id
@@ -155,22 +176,23 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
         print(f"[ERROR]\t{e}")
         return -1, -1
 
+
 def count_contact_voxels(segmentation, resolution) -> dict[ContactPair, int]:
-    contacts = cc3d.contacts(segmentation,
-                             connectivity=6,
-                             anisotropy=tuple(resolution), 
-                             surface_area=True
+    contacts = cc3d.contacts(
+        segmentation, connectivity=6, anisotropy=tuple(resolution), surface_area=True
     )
     return cast(dict[ContactPair, int], contacts)
 
+
 def remove_contact_overlap(
     contact_counts: dict[ContactPair, int],
-    counts_to_remove: list[dict[ContactPair, int]]
+    counts_to_remove: list[dict[ContactPair, int]],
 ):
     final_contacts = contact_counts
     for count_to_remove in counts_to_remove:
         final_contacts = dict(Counter(final_contacts) - Counter(count_to_remove))
     return final_contacts
+
 
 def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
     """
@@ -184,14 +206,20 @@ def count_volume_voxels(segmentation) -> dict[SegmentID, int]:
 
     return volume_counts
 
+
 def return_ctc_edges(task: ContactomeEdgeTaskPayload) -> dict[ContactPair, int]:
-    xyz_start = task['cuboid_start']
-    xyz_radius = task['cuboid_radius']
+    xyz_start = task["cuboid_start"]
+    xyz_radius = task["cuboid_radius"]
     try:
         # Get the CloudVolume dimensions
         segmentation_volume = CloudVolume(
-            task['segmentation_channel'], use_https=True, parallel=False,
-            cache=False, secrets="", mip=cast(Any, task['mip']), fill_missing=True
+            task["segmentation_channel"],
+            use_https=True,
+            parallel=False,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
         )
 
         bounds_min, bounds_max = _bbox_min_max(getattr(segmentation_volume, "bounds"))
@@ -209,7 +237,9 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload) -> dict[ContactPair, int]:
         z_requested_max = int(xyz_start[2] + xyz_radius[2] + 1)
         z_max = min(bounds_max[2], z_requested_max)
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
-            raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
+            raise ValueError(
+                "Slicing range is invalid due to out-of-bounds coordinates."
+            )
         seg_mask = np.asarray(
             cast(Any, segmentation_volume)[x_min:x_max, y_min:y_max, z_min:z_max, 0]
         ).squeeze()
@@ -222,8 +252,10 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload) -> dict[ContactPair, int]:
         o_x = count_contact_voxels(seg_mask[-1:, :, :], resolution)
         o_y = count_contact_voxels(seg_mask[:, -1:, :], resolution)
         o_z = count_contact_voxels(seg_mask[:, :, -1:], resolution)
-        final_contact_counts = remove_contact_overlap(initial_contact_counts, [o_x, o_y, o_z])
-        
+        final_contact_counts = remove_contact_overlap(
+            initial_contact_counts, [o_x, o_y, o_z]
+        )
+
         return final_contact_counts
     except Exception as e:
         # print(f"[ERROR]\t[ctc] {e}")
@@ -232,14 +264,20 @@ def return_ctc_edges(task: ContactomeEdgeTaskPayload) -> dict[ContactPair, int]:
 
         return {}
 
+
 def return_volume_counts(task: VolumeTaskPayload):
-    xyz_start = task['cuboid_start']
-    xyz_radius = task['cuboid_radius']
+    xyz_start = task["cuboid_start"]
+    xyz_radius = task["cuboid_radius"]
     try:
         # Get the CloudVolume dimensions
         segmentation_volume = CloudVolume(
-            task['segmentation_channel'], use_https=True, parallel=False,
-            cache=False, secrets="", mip=cast(Any, task['mip']), fill_missing=True
+            task["segmentation_channel"],
+            use_https=True,
+            parallel=False,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
         )
 
         bounds_min, bounds_max = _bbox_min_max(getattr(segmentation_volume, "bounds"))
@@ -251,7 +289,9 @@ def return_volume_counts(task: VolumeTaskPayload):
         z_max = min(bounds_max[2], int(xyz_start[2] + xyz_radius[2]))
 
         if x_min >= x_max or y_min >= y_max or z_min >= z_max:
-            raise ValueError("Slicing range is invalid due to out-of-bounds coordinates.")
+            raise ValueError(
+                "Slicing range is invalid due to out-of-bounds coordinates."
+            )
 
         seg_mask = np.asarray(
             cast(Any, segmentation_volume)[x_min:x_max, y_min:y_max, z_min:z_max, 0]
@@ -263,12 +303,16 @@ def return_volume_counts(task: VolumeTaskPayload):
         print(f"[ERROR]\t[volume] {e}")
         return {}
 
+
 def process_queue_job(event, context):
     # event_records = json.loads(event['Records'][0]['body'])
-    for record in event['Records']:
-        payload = json.loads(record['body'])
+    for record in event["Records"]:
+        payload = json.loads(record["body"])
         # Uses "contactome" as the default task_type for back-compat.
-        if "cuboid_start" in payload and payload.get("task_type", "contactome") == "contactome":
+        if (
+            "cuboid_start" in payload
+            and payload.get("task_type", "contactome") == "contactome"
+        ):
             # Contactome edge
             payload = ContactomeEdgeTaskPayload(**payload)
             graph_id = payload.pop("graph_id")
@@ -280,18 +324,21 @@ def process_queue_job(event, context):
                     graph_id=graph_id,
                     # XYZ goes first so that it can still serve as a useful key to retrieve
                     # a specific centroid from the listing:
-                    synapse_id=f"ctc_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_pre{ids[0]}_post{ids[1]}_w{edges[ids]}"
+                    synapse_id=f"ctc_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_pre{ids[0]}_post{ids[1]}_w{edges[ids]}",
                 ).save()
 
-        elif "cuboid_start" in payload and payload.get("task_type", "contactome") == "volume":
+        elif (
+            "cuboid_start" in payload
+            and payload.get("task_type", "contactome") == "volume"
+        ):
             # Volume task
             payload = VolumeTaskPayload(**payload)
             graph_id = payload.pop("graph_id")
             volume_counts = return_volume_counts(payload)
-            for (seg_id, count) in volume_counts.items():
+            for seg_id, count in volume_counts.items():
                 VolumeCountResultsModel(
                     graph_id=graph_id,
-                    synapse_id=f"vol_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_seg{seg_id}_v{count}"
+                    synapse_id=f"vol_x{payload['cuboid_start'][0]}_y{payload['cuboid_start'][1]}_z{payload['cuboid_start'][2]}_seg{seg_id}_v{count}",
                 ).save()
         else:
             # Synapse edge
@@ -306,7 +353,5 @@ def process_queue_job(event, context):
                 graph_id=graph_id,
                 # XYZ goes first so that it can still serve as a useful key to retrieve
                 # a specific centroid from the listing:
-                synapse_id=f"syn_x{payload['centroid_xyz'][0]}_y{payload['centroid_xyz'][1]}_z{payload['centroid_xyz'][2]}_pre{u}_post{v}"
+                synapse_id=f"syn_x{payload['centroid_xyz'][0]}_y{payload['centroid_xyz'][1]}_z{payload['centroid_xyz'][2]}_pre{u}_post{v}",
             ).save()
-
-
