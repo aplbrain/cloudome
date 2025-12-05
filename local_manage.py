@@ -197,15 +197,13 @@ def enqueue_centroids_from_file(
     """
     tq = TaskQueue(fq_url)
     for i, payload in enumerate(
-        tqdm(
-            generate_centroidwise_tasks(
-                graph_id=graph_id,
-                filename=filename,
-                synapse_channel=synapse_channel,
-                segmentation_channel=segmentation_channel,
-                mip=mip,
-                enqueue_limit=enqueue_limit,
-            )
+        generate_centroidwise_tasks(
+            graph_id=graph_id,
+            filename=filename,
+            synapse_channel=synapse_channel,
+            segmentation_channel=segmentation_channel,
+            mip=mip,
+            enqueue_limit=enqueue_limit,
         )
     ):
         tq.insert(
