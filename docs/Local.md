@@ -39,3 +39,42 @@ You can also limit the number of tasks processed by each worker for testing purp
 ```bash
 uv run local_manage.py worker --dequeue-limit 10
 ```
+
+
+
+## simplify a contactome SQLite database
+
+If you already have a populated contactome SQLite database (for example the
+worker output written by `local_manage.py`), you can aggregate it in-place or
+write a new compact database that only retains `(pre, post, weight)` columns:
+
+```bash
+uv run python3 scripts/simplify_contactome_sqlite_db.py \
+    /path/to/contactome.db \
+    --output-db /path/to/contactome_simplified.db
+
+```
+
+
+Or in-place (saving a backup copy as a renamed table):
+```bash
+uv run python3 scripts/simplify_contactome_sqlite_db.py \
+	/path/to/contactome.db \
+	--in-place --backup
+```
+
+Omit `--in-place` to write a new `*_simplified.db` alongside the source file,
+or pass `--output-db /tmp/contactome_simple.db --force` to control the output
+path explicitly.
+
+## Merge sqlite db shards
+
+If you have a set of sharded sqlite db files (e.g. produced by workers with
+`--shard-sqlite`), you can merge them into a single sqlite db file using:
+
+```bash
+uv run scripts/merge_sqlite_dbs.py --out /path/to/merged.db --dir /path/to/sharded/dbs/
+```
+
+This will scan the specified directory for all `.db` files and merge the components into a single output database.
+

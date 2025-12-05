@@ -15,27 +15,43 @@ def generate_cuboidwise_tasks(
     enqueue_limit: int | None = None,
 ):
     # Create a file with each line being a cuboid start and radius
-    seg_data = CloudVolume(segmentation_channel, mip=mip, cache=True)
+    seg_data = CloudVolume(
+        segmentation_channel, mip=mip, cache=True, use_https=True, secrets=""
+    )
 
-    if z_end:
-        z_end = z_end if z_end < int(seg_data.shape[2]) else int(seg_data.shape[2])
+    voxel_offset_raw = getattr(seg_data, "voxel_offset")
+    voxel_offset = tuple(int(v) for v in tuple(voxel_offset_raw)[:3])
+    shape_raw = getattr(seg_data, "shape")
+    volume_shape = tuple(int(s) for s in tuple(shape_raw)[:3])
+
+    x_start = voxel_offset[0]
+    x_stop = voxel_offset[0] + volume_shape[0]
+    y_start = voxel_offset[1]
+    y_stop = voxel_offset[1] + volume_shape[1]
+
+    z_start_voxel = 0 if z_start is None else max(0, min(volume_shape[2], z_start))
+    if z_end is None:
+        z_end_voxel = volume_shape[2]
     else:
-        z_end = int(seg_data.shape[2])
+        z_end_voxel = max(z_start_voxel, min(volume_shape[2], z_end))
+
+    z_start = voxel_offset[2] + z_start_voxel
+    z_stop = voxel_offset[2] + z_end_voxel
 
     blocks = block_compute(
-        x_start=0,
-        x_stop=int(seg_data.shape[0]),
-        y_start=0,
-        y_stop=int(seg_data.shape[1]),
-        z_start=z_start or 0,
-        z_stop=z_end,
+        x_start=x_start,
+        x_stop=x_stop,
+        y_start=y_start,
+        y_stop=y_stop,
+        z_start=z_start,
+        z_stop=z_stop,
         block_size=block_size,
     )
 
-    # if enqueue_limit:
-    #     print(f"Queueing {min(len(blocks), enqueue_limit)} blocks")
-    # else:
-    #     print(f"Queueing {len(blocks)} blocks")
+    if enqueue_limit:
+        print(f"Queueing {min(len(blocks), enqueue_limit)} blocks")
+    else:
+        print(f"Queueing {len(blocks)} blocks")
 
     for i, ((x_start, x_stop), (y_start, y_stop), (z_start, z_stop)) in enumerate(
         blocks

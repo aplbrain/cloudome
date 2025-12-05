@@ -1,6 +1,5 @@
 import csv
 from collections import defaultdict
-from intern.utils.parallel import block_compute
 import json
 import boto3
 import networkx as nx
@@ -13,7 +12,6 @@ import re
 
 from database import (
     SynapseEdgeResultsModel,
-    SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
     ContactEdgeResultsModel,
     TaskType,

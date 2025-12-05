@@ -4,7 +4,7 @@ import argparse
 def _parse_mip_argument(mip_arg: str) -> list | int:
     # Parse MIP from string - always convert to a list for consistency
     if "," in mip_arg:
-        mip = [int(x) for x in mip_arg.split(",")]
+        mip = [float(x) for x in mip_arg.split(",")]
         return mip
     else:
         try:
