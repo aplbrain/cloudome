@@ -84,6 +84,7 @@ def _process_synapse_task(task_payload: SynapseEdgeTaskPayload, sqlite_db_path: 
     # graph_id  # string, like "foo"
     # pre       # u64
     # post      # u64
+    # xyz_loc   # string, like "x,y,z"
     conn = sqlite3.connect(sqlite_db_path)
     cursor = conn.cursor()
     cursor.execute(
@@ -92,16 +93,18 @@ def _process_synapse_task(task_payload: SynapseEdgeTaskPayload, sqlite_db_path: 
             graph_id TEXT,
             pre TEXT,
             post TEXT,
-            PRIMARY KEY (graph_id, pre, post)
+            xyz_loc TEXT,
+            PRIMARY KEY (graph_id, xyz_loc)
         )
         """
     )
+    xyz_loc = f"{task_payload['centroid_xyz'][0]},{task_payload['centroid_xyz'][1]},{task_payload['centroid_xyz'][2]}"
     cursor.execute(
         """
-        INSERT INTO synapse_edges (graph_id, pre, post)
-        VALUES (?, ?, ?)
+        INSERT INTO synapse_edges (graph_id, pre, post, xyz_loc)
+        VALUES (?, ?, ?, ?)
         """,
-        (task_payload["graph_id"], str(edge[0]), str(edge[1])),
+        (task_payload["graph_id"], str(edge[0]), str(edge[1]), xyz_loc),
     )
     conn.commit()
     conn.close()
@@ -139,7 +142,8 @@ def provision_db_synapses(sqlite_db_path: str):
             graph_id TEXT,
             pre TEXT,
             post TEXT,
-            PRIMARY KEY (graph_id, pre, post)
+            xyz_loc TEXT,
+            PRIMARY KEY (graph_id, xyz_loc)
         )
         """
     )
@@ -197,15 +201,13 @@ def enqueue_centroids_from_file(
     """
     tq = TaskQueue(fq_url)
     for i, payload in enumerate(
-        tqdm(
-            generate_centroidwise_tasks(
-                graph_id=graph_id,
-                filename=filename,
-                synapse_channel=synapse_channel,
-                segmentation_channel=segmentation_channel,
-                mip=mip,
-                enqueue_limit=enqueue_limit,
-            )
+        generate_centroidwise_tasks(
+            graph_id=graph_id,
+            filename=filename,
+            synapse_channel=synapse_channel,
+            segmentation_channel=segmentation_channel,
+            mip=mip,
+            enqueue_limit=enqueue_limit,
         )
     ):
         tq.insert(
