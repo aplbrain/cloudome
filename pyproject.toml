@@ -18,6 +18,7 @@ dependencies = [
     "pandas>=2.3.1",
     "pynamodb>=6.0.2",
     "setuptools==74.1.2",
+    "task-queue>=2.14.3",
     "tqdm>=4.67.1",
     "zappa>=0.59.0",
 ]
