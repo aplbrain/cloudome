@@ -128,9 +128,9 @@ if __name__ == "__main__":
     provision_db_contactome(sqlite_db_path)
     provision_db_synapses(sqlite_db_path)
     
-   # contactome_graph_id = test_enqueue_contactome_tasks()
-   #  time.sleep(2)
-   #  test_results("contactome_edges", contactome_graph_id, correct_num_lines_for_contactome_task)
+    contactome_graph_id = test_enqueue_contactome_tasks()
+    time.sleep(2)
+    test_results("contactome_edges", contactome_graph_id, correct_num_lines_for_contactome_task)
     
    #  volume_graph_id = test_enqueue_volume_tasks()
    #  time.sleep(2)
