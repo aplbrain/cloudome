@@ -30,5 +30,6 @@
         ],
         "timeout_seconds": 900,
         "memory_size": 2000
+	"environment_variables": {"CLOUD_VOLUME_DIR": "/tmp/.cloudvolume" }
     }
 }
