@@ -136,9 +136,54 @@ def _attach_synapse_parser(subparsers: argparse._SubParsersAction):
     return synapses_parser, synapses_subparsers, (syn_generate_parser, enqueue_parser)
 
 
+def _attach_volume_parser(subparsers: argparse._SubParsersAction):
+    volume_parser = subparsers.add_parser(
+        "volume", help="Commands related to volume computation"
+    )
+    volume_subparsers = volume_parser.add_subparsers(dest="command", required=True)
+
+    # Subcommand: generate (volume)
+    volume_generate_parser = volume_subparsers.add_parser(
+        "generate", help="Generate cuboidwise tasks for volume"
+    )
+    volume_generate_parser.add_argument(
+        "--graph-id", type=str, required=True, help="Graph ID for processing"
+    )
+    volume_generate_parser.add_argument(
+        "--segmentation-channel",
+        type=str,
+        required=True,
+        help="S3 path to segmentation channel data",
+    )
+    volume_generate_parser.add_argument(
+        "--block-size-x", type=int, default=64, help="Block size for X dimension"
+    )
+    volume_generate_parser.add_argument(
+        "--block-size-y", type=int, default=64, help="Block size for Y dimension"
+    )
+    volume_generate_parser.add_argument(
+        "--block-size-z", type=int, default=32, help="Block size for Z dimension"
+    )
+    volume_generate_parser.add_argument(
+        "--z-start", type=int, default=None, help="Starting Z slice"
+    )
+    volume_generate_parser.add_argument(
+        "--z-end", type=int, default=None, help="Ending Z slice"
+    )
+    volume_generate_parser.add_argument(
+        "--enqueue-limit",
+        type=int,
+        default=None,
+        help="Limit the number of tasks to enqueue",
+    )
+
+    return volume_parser, volume_subparsers, (volume_generate_parser,)
+
+
 __all__ = [
     "_parse_mip_argument",
     "_attach_global_arguments",
     "_attach_contactome_parser",
     "_attach_synapse_parser",
+    "_attach_volume_parser",
 ]

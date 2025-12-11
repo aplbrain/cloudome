@@ -24,6 +24,7 @@ from shared_utils import (
     _attach_contactome_parser,
     _attach_global_arguments,
     _attach_synapse_parser,
+    _attach_volume_parser,
     _parse_mip_argument,
 )
 from cloudome import return_ctc_edges, return_seg_edge
@@ -318,45 +319,7 @@ def parse_arguments():
     subparsers = parser.add_subparsers(dest="namespace", required=True)
     _attach_contactome_parser(subparsers)
     _attach_synapse_parser(subparsers)
-
-    # Volume namespace and subcommands (generate)
-    volume_parser = subparsers.add_parser(
-        "volume", help="Commands related to volume computation"
-    )
-    volume_subparsers = volume_parser.add_subparsers(dest="command", required=True)
-    volume_generate_parser = volume_subparsers.add_parser(
-        "generate", help="Generate cuboidwise tasks for volume"
-    )
-    volume_generate_parser.add_argument(
-        "--graph-id", type=str, required=True, help="Graph ID for processing"
-    )
-    volume_generate_parser.add_argument(
-        "--segmentation-channel",
-        type=str,
-        required=True,
-        help="S3 path to segmentation channel data",
-    )
-    volume_generate_parser.add_argument(
-        "--block-size-x", type=int, default=64, help="Block size for X dimension"
-    )
-    volume_generate_parser.add_argument(
-        "--block-size-y", type=int, default=64, help="Block size for Y dimension"
-    )
-    volume_generate_parser.add_argument(
-        "--block-size-z", type=int, default=32, help="Block size for Z dimension"
-    )
-    volume_generate_parser.add_argument(
-        "--z-start", type=int, default=None, help="Starting Z slice"
-    )
-    volume_generate_parser.add_argument(
-        "--z-end", type=int, default=None, help="Ending Z slice"
-    )
-    volume_generate_parser.add_argument(
-        "--enqueue-limit",
-        type=int,
-        default=None,
-        help="Limit the number of tasks to enqueue",
-    )
+    _attach_volume_parser(subparsers)
 
     worker_parser = subparsers.add_parser("worker", help="Run a task worker")
     worker_parser.add_argument(
