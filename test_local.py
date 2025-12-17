@@ -131,8 +131,8 @@ if __name__ == "__main__":
     contactome_graph_id = test_enqueue_contactome_tasks()
     test_results("contactome_edges", contactome_graph_id, correct_num_lines_for_contactome_task)
     
-   #  volume_graph_id = test_enqueue_volume_tasks()
-   #  test_results(volume_graph_id, correct_num_lines_for_volume_task)
+    volume_graph_id = test_enqueue_volume_tasks()
+    test_results("volume_counts", volume_graph_id, correct_num_lines_for_volume_task)
 
     connectome_graph_id = test_enqueue_connectome_tasks()
     test_results("synapse_edges", connectome_graph_id, correct_num_lines_for_connectome_task)

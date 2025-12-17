@@ -24,9 +24,11 @@ from shared_utils import (
     _attach_contactome_parser,
     _attach_global_arguments,
     _attach_synapse_parser,
+    _attach_volume_parser,
     _parse_mip_argument,
 )
 from cloudome import return_ctc_edges, return_seg_edge
+from cloudome import return_volume_counts
 
 QUEUE_LEASE_SECONDS = 60 * 5  # 5 minutes
 _SQLITE_SHARDING_ENABLED = False
@@ -151,6 +153,25 @@ def provision_db_synapses(sqlite_db_path: str):
     conn.close()
 
 
+def provision_db_volume(sqlite_db_path: str):
+    """Provision the local SQLite database for per-seg volume counts."""
+    conn = sqlite3.connect(_resolve_sqlite_path(sqlite_db_path))
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS volume_counts (
+            graph_id TEXT,
+            location TEXT,
+            seg_id TEXT,
+            voxel_count INTEGER,
+            PRIMARY KEY (graph_id, location, seg_id)
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def enqueue_cuboidwise_tasks_for_contactome_or_volume(
     fq_url: str,
     graph_id: str,
@@ -177,13 +198,58 @@ def enqueue_cuboidwise_tasks_for_contactome_or_volume(
         )
     ):
         payload: ContactomeEdgeTaskPayload | VolumeTaskPayload = task
-        tq.insert(
-            partial(
-                _process_contactome_task,
-                task_payload=payload,
-                sqlite_db_path=sqlite_db_path,
+        if task_type == "contactome":
+            tq.insert(
+                partial(
+                    _process_contactome_task,
+                    task_payload=payload,  # type: ignore[arg-type]
+                    sqlite_db_path=sqlite_db_path,
+                )
             )
+        else:
+            tq.insert(
+                partial(
+                    _process_volume_task,
+                    task_payload=payload,  # type: ignore[arg-type]
+                    sqlite_db_path=sqlite_db_path,
+                )
+            )
+
+
+@queueable
+def _process_volume_task(task_payload: VolumeTaskPayload, sqlite_db_path: str):
+    """Process a volume task and persist per-seg voxel counts to SQLite."""
+    sqlite_db_path = _resolve_sqlite_path(sqlite_db_path)
+    counts = return_volume_counts(task_payload)
+    conn = sqlite3.connect(sqlite_db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS volume_counts (
+            graph_id TEXT,
+            location TEXT,
+            seg_id TEXT,
+            voxel_count INTEGER,
+            PRIMARY KEY (graph_id, location, seg_id)
         )
+        """
+    )
+    location_str = f"vol_x{task_payload['cuboid_start'][0]}_y{task_payload['cuboid_start'][1]}_z{task_payload['cuboid_start'][2]}"
+    for seg_id, voxels in counts.items():
+        cursor.execute(
+            """
+            INSERT INTO volume_counts (graph_id, location, seg_id, voxel_count)
+            VALUES (?, ?, ?, ?)
+            """,
+            (
+                task_payload["graph_id"],
+                location_str,
+                str(seg_id),
+                int(voxels),
+            ),
+        )
+    conn.commit()
+    conn.close()
 
 
 def enqueue_centroids_from_file(
@@ -253,6 +319,7 @@ def parse_arguments():
     subparsers = parser.add_subparsers(dest="namespace", required=True)
     _attach_contactome_parser(subparsers)
     _attach_synapse_parser(subparsers)
+    _attach_volume_parser(subparsers)
 
     worker_parser = subparsers.add_parser("worker", help="Run a task worker")
     worker_parser.add_argument(
@@ -346,6 +413,23 @@ def main():
                 synapse_channel=args.synapse_channel,
                 segmentation_channel=args.segmentation_channel,
                 mip=mip,
+                enqueue_limit=args.enqueue_limit,
+            )
+
+    elif args.namespace == "volume":
+        if args.command == "generate":
+            block_size = (args.block_size_x, args.block_size_y, args.block_size_z)
+            provision_db_volume(args.sqlite_db_path)
+            enqueue_cuboidwise_tasks_for_contactome_or_volume(
+                fq_url=args.queue_url,
+                graph_id=args.graph_id,
+                task_type="volume",
+                segmentation_channel=args.segmentation_channel,
+                sqlite_db_path=args.sqlite_db_path,
+                mip=mip,
+                block_size=block_size,
+                z_start=args.z_start,
+                z_end=args.z_end,
                 enqueue_limit=args.enqueue_limit,
             )
 
