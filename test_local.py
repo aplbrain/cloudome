@@ -24,7 +24,7 @@ import sqlite3
 block_size = (64, 64, 32)
 queue_url = "fq://q-CloudomeTasks"
 sqlite_db_path= "cloudome-results.db"
-segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/"
+segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/synthetic_sv/test_sv"
 synapse_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/"
 raw_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/em"
 output_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/supervoxels/"
