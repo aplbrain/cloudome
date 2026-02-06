@@ -180,10 +180,90 @@ def _attach_volume_parser(subparsers: argparse._SubParsersAction):
     return volume_parser, volume_subparsers, (volume_generate_parser,)
 
 
+def _attach_supervoxel_parser(subparsers: argparse._SubParsersAction):
+    supervoxel_parser = subparsers.add_parser(
+        "supervoxel", help="Commands related to supervoxel generation"
+    )
+    supervoxel_subparsers = supervoxel_parser.add_subparsers(
+        dest="command", required=True
+    )
+
+    # Subcommand: generate (supervoxel)
+    supervoxel_generate_parser = supervoxel_subparsers.add_parser(
+        "generate", help="Generate supervoxel tasks for volume chunks"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--graph-id", type=str, required=True, help="Graph ID for processing"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--segmentation-channel",
+        type=str,
+        required=True,
+        help="S3 path to input segmentation channel data",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--output-channel",
+        type=str,
+        required=True,
+        help="S3 path to output supervoxel layer",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--raw-channel",
+        type=str,
+        required=True,
+        help="S3 path to raw EM data for edge guidance",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--chunk-size-x", type=int, default=128, help="Chunk size for X dimension"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--chunk-size-y", type=int, default=128, help="Chunk size for Y dimension"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--chunk-size-z", type=int, default=128, help="Chunk size for Z dimension"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--target-voxels-per-sv",
+        type=int,
+        default=25000,
+        help="Target voxels per supervoxel",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--min-voxels-per-sv",
+        type=int,
+        default=2000,
+        help="Minimum voxels per supervoxel after merging",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--halo", type=int, default=8, help="Halo size for boundary affinities"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--edge-sigma",
+        type=float,
+        default=1.5,
+        help="Gaussian sigma for edge cost computation",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--z-start", type=int, default=None, help="Starting Z chunk index"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--z-end", type=int, default=None, help="Ending Z chunk index"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--enqueue-limit",
+        type=int,
+        default=None,
+        help="Limit the number of tasks to enqueue",
+    )
+
+    return supervoxel_parser, supervoxel_subparsers, (supervoxel_generate_parser,)
+
+
 __all__ = [
     "_parse_mip_argument",
     "_attach_global_arguments",
     "_attach_contactome_parser",
     "_attach_synapse_parser",
     "_attach_volume_parser",
+    "_attach_supervoxel_parser",
 ]

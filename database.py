@@ -3,7 +3,7 @@ from typing import Literal, TypedDict
 from pynamodb.models import Model
 from pynamodb.attributes import UnicodeAttribute
 
-TaskType = Literal["connectome", "contactome", "volume"]
+TaskType = Literal["connectome", "contactome", "volume", "supervoxel"]
 MipType = list[float] | int
 
 CentroidXYZ = tuple[float, float, float]
@@ -40,6 +40,24 @@ class VolumeTaskPayload(TypedDict):
     cuboid_radius: CentroidXYZ
     segmentation_channel: str
     mip: MipType
+
+
+class SupervoxelTaskPayload(TypedDict):
+    graph_id: str
+    task_type: TaskType  # "supervoxel"
+    cuboid_start: CentroidXYZ  # chunk origin (x, y, z)
+    cuboid_radius: CentroidXYZ  # chunk dimensions (x, y, z)
+    chunk_index_xyz: tuple[int, int, int]  # (cx, cy, cz) for global ID packing
+    n_chunks_xyz: tuple[int, int, int]  # total chunks (nx, ny, nz) for ID packer init
+    segmentation_channel: str  # input segmentation
+    output_channel: str  # destination for supervoxels
+    raw_channel: str  # guidance for watershed (required)
+    mip: MipType
+    target_voxels_per_sv: int  # ~25000
+    min_voxels_per_sv: int  # ~2000
+    halo: int  # ~8 for boundary handling
+    edge_sigma: float  # ~1.5 for gradient
+    min_local_bits: int  # allocate bits for local IDs
 
 
 class SynapseEdgeResultsModel(Model):
@@ -81,3 +99,18 @@ class VolumeCountResultsModel(Model):
 
     graph_id = UnicodeAttribute(hash_key=True)
     synapse_id = UnicodeAttribute(range_key=True)  # "vol_x100_y20_z42_seg19934_v1263"
+
+
+class SupervoxelResultsModel(Model):
+    """
+    A DynamoDB store for supervoxel chunk processing results
+    """
+
+    class Meta:
+        table_name = "CloudomeResults"
+        region = "us-east-1"
+
+    graph_id = UnicodeAttribute(hash_key=True)
+    synapse_id = UnicodeAttribute(
+        range_key=True
+    )  # "sv_x0_y0_z0_n_chunks_248_num_sv_15_parent_counts_..."

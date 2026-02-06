@@ -11,6 +11,8 @@ from database import (
     ContactEdgeResultsModel,
     VolumeCountResultsModel,
     VolumeTaskPayload,
+    SupervoxelTaskPayload,
+    SupervoxelResultsModel,
 )
 import cc3d
 import math
@@ -67,16 +69,14 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
             task["synapse_channel"],
             use_https=True,
             cache=False,
-            secrets="",
-            mip=cast(Any, task["mip"]),
+            mip=cast(int, task["mip"]),
             fill_missing=True,
         )
         segmentation_volume = CloudVolume(
             task["segmentation_channel"],
             use_https=True,
             cache=False,
-            secrets="",
-            mip=cast(Any, task["mip"]),
+            mip=cast(int, task["mip"]),
             fill_missing=True,
         )
 
@@ -304,12 +304,137 @@ def return_volume_counts(task: VolumeTaskPayload):
         return {}
 
 
+def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
+    """
+    Process a supervoxel chunk task.
+    Reads input segmentation + raw channel, processes with supervoxelize_array,
+    writes output supervoxels to output_channel, and returns metadata.
+    """
+    from shared_supervoxel_utils import supervoxelize_array
+    
+    try:
+        # Load input segmentation with halo
+        seg_cv = CloudVolume(
+            task["segmentation_channel"],
+            use_https=True,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
+        )
+        raw_cv = CloudVolume(
+            task["raw_channel"],
+            use_https=True,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
+        )
+        
+        # Extract cuboid bounds including halo
+        x_start, y_start, z_start = task["cuboid_start"]
+        x_radius, y_radius, z_radius = task["cuboid_radius"]
+        halo = task["halo"]
+        
+        # Read with halo
+        x_read_start = max(0, x_start - halo)
+        y_read_start = max(0, y_start - halo)
+        z_read_start = max(0, z_start - halo)
+        x_read_stop = x_start + x_radius + halo
+        y_read_stop = y_start + y_radius + halo
+        z_read_stop = z_start + z_radius + halo
+        
+        seg_data = np.squeeze(
+            np.asarray(seg_cv[x_read_start:x_read_stop, y_read_start:y_read_stop, z_read_start:z_read_stop])
+        )
+        raw_data = np.squeeze(
+            np.asarray(raw_cv[x_read_start:x_read_stop, y_read_start:y_read_stop, z_read_start:z_read_stop])
+        )
+        
+        # Convert XYZ to ZYX for processing
+        seg_data = np.moveaxis(seg_data, [0, 1, 2], [2, 1, 0])
+        raw_data = np.moveaxis(raw_data, [0, 1, 2], [2, 1, 0])
+        
+        # Process supervoxels
+        sv_array, chunk_metadata = supervoxelize_array(
+            seg_data,
+            raw_data,
+            chunk_xyz=(task["cuboid_radius"][0], task["cuboid_radius"][1], task["cuboid_radius"][2]),
+            halo=halo,
+            target_voxels_per_sv=task["target_voxels_per_sv"],
+            min_voxels_per_sv=task["min_voxels_per_sv"],
+            edge_sigma=task["edge_sigma"],
+            n_chunks_xyz=task["n_chunks_xyz"],
+        )
+        
+        # Convert back to XYZ for writing
+        sv_array_xyz = np.moveaxis(sv_array, [0, 1, 2], [2, 1, 0])
+        
+        # Write supervoxels to output channel (write region only, no halo)
+        output_cv = CloudVolume(
+            task["output_channel"],
+            cache=False,
+            #TODO: Deal with secrets later
+            mip=cast(Any, task["mip"]),
+        )
+        
+        # Write the non-halo region
+        halo_z = halo  # adjust if halo differs per axis
+        halo_y = halo
+        halo_x = halo
+        write_slice_x = slice(halo_x, halo_x + task["cuboid_radius"][0])
+        write_slice_y = slice(halo_y, halo_y + task["cuboid_radius"][1])
+        write_slice_z = slice(halo_z, halo_z + task["cuboid_radius"][2])
+        
+        sv_write = sv_array_xyz[write_slice_x, write_slice_y, write_slice_z]
+        output_cv[x_start:x_start + task["cuboid_radius"][0],
+                  y_start:y_start + task["cuboid_radius"][1],
+                  z_start:z_start + task["cuboid_radius"][2]] = sv_write
+        
+        # Aggregate metadata for this chunk
+        cx, cy, cz = task["chunk_index_xyz"]
+        num_sv = sum(m["num_sv"] for m in chunk_metadata)
+        total_parent_counts: dict[int, int] = {}
+        all_sv_sizes: list[int] = []
+        
+        for m in chunk_metadata:
+            all_sv_sizes.extend(m["sv_sizes"])
+            for parent_id, count in m["parent_counts"].items():
+                total_parent_counts[parent_id] = total_parent_counts.get(parent_id, 0) + count
+        
+        return {
+            "num_sv": num_sv,
+            "parent_counts": total_parent_counts,
+            "sv_sizes": all_sv_sizes,
+            "chunk_index": (cx, cy, cz),
+        }
+    except Exception as e:
+        print(f"[ERROR]\t[supervoxel] {e}")
+        return {}
+
+
 def process_queue_job(event, context):
     # event_records = json.loads(event['Records'][0]['body'])
     for record in event["Records"]:
         payload = json.loads(record["body"])
         # Uses "contactome" as the default task_type for back-compat.
         if (
+            "cuboid_start" in payload
+            and payload.get("task_type", "contactome") == "supervoxel"
+        ):
+            # Supervoxel task
+            payload = SupervoxelTaskPayload(**payload)
+            graph_id = payload.pop("graph_id")
+            chunk_index = payload["chunk_index_xyz"]
+            results = return_supervoxel_results(payload)
+            # Save results to dynamodb
+            if results:
+                parent_counts_str = ",".join(f"{pid}:{cnt}" for pid, cnt in results.get("parent_counts", {}).items())
+                SupervoxelResultsModel(
+                    graph_id=graph_id,
+                    synapse_id=f"sv_x{chunk_index[0]}_y{chunk_index[1]}_z{chunk_index[2]}_n{results['num_sv']}_p{parent_counts_str}",
+                ).save()
+        elif (
             "cuboid_start" in payload
             and payload.get("task_type", "contactome") == "contactome"
         ):
