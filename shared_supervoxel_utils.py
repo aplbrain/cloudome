@@ -263,6 +263,7 @@ def process_chunk(
     sv_sizes: list[int] = []  # size of each supervoxel in this chunk
 
     for lab in labels_here:
+        parent_id = int(lab)
         mask = seg_chunk == lab
         # Decide whether to split further
         vox = int(mask.sum())
@@ -282,8 +283,8 @@ def process_chunk(
             continue
 
         # Track this parent segment
-        if lab not in parent_sv_ids:
-            parent_sv_ids[lab] = []
+        if parent_id not in parent_sv_ids:
+            parent_sv_ids[parent_id] = []
 
         # Assign global IDs
         for k in range(1, ncomp + 1):
@@ -297,7 +298,7 @@ def process_chunk(
             sv_mask = comp == k
             out[sv_mask] = gid
             sv_sizes.append(int(sv_mask.sum()))
-            parent_sv_ids[lab].append(int(gid))
+            parent_sv_ids[parent_id].append(int(gid))
 
     metadata = {
         "num_sv": local_counter,
@@ -316,6 +317,7 @@ def supervoxelize_array(
     min_voxels_per_sv: int = 2000,
     edge_sigma: float = 1.5,
     n_chunks_xyz: Optional[Tuple[int, int, int]] = None,
+    min_local_bits: int = 20,
 ) -> Tuple[np.ndarray, list[dict[str, Any]]]:
     """
     seg: XYZ uint64 input segmentation (0=background), shape (X, Y, Z).
@@ -329,7 +331,8 @@ def supervoxelize_array(
     if n_chunks_xyz is None:
         n_chunks_xyz = chunk_grid_for_shape(seg.shape, chunk_xyz)
 
-    id_packer = GlobalIDPacker(n_chunks_xyz, min_local_bits=20)
+    # Respect the requested local bit allocation so ID packing matches caller expectations.
+    id_packer = GlobalIDPacker(n_chunks_xyz, min_local_bits=min_local_bits)
 
     chunk_metadata_list: list[dict[str, Any]] = []
 
@@ -396,6 +399,10 @@ def generate_supervoxel_tasks(
     seg_data = CloudVolume(
         segmentation_channel, mip=cast(Any, mip), cache=True, use_https=True,
     )
+    volume_chunk_xyz = tuple(int(c) for c in tuple(getattr(seg_data, "chunk_size"))[:3])
+    if tuple(chunk_xyz) != volume_chunk_xyz:
+        print(f"[supervoxel] Adjusting chunk size to volume chunk size {volume_chunk_xyz} (was {chunk_xyz})")
+        chunk_xyz = volume_chunk_xyz
 
     voxel_offset_raw = getattr(seg_data, "voxel_offset")
     voxel_offset = tuple(int(v) for v in tuple(voxel_offset_raw)[:3])

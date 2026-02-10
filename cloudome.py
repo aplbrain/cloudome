@@ -19,6 +19,10 @@ import math
 from collections import Counter
 
 from cloudvolume import CloudVolume
+from shared_supervoxel_utils import (
+    process_chunk,
+    GlobalIDPacker,
+)
 
 os.environ["CLOUD_VOLUME_DIR"] = "/tmp/cloudvolume"
 os.makedirs("/tmp/cloudvolume", exist_ok=True)
@@ -307,12 +311,9 @@ def return_volume_counts(task: VolumeTaskPayload):
 def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
     """
     Process a supervoxel chunk task.
-    Reads input segmentation + raw channel, processes with supervoxelize_array,
+    Reads input segmentation + raw channel, processes the single chunk,
     writes output supervoxels to output_channel, and returns metadata.
     """
-    from shared_supervoxel_utils import supervoxelize_array
-    
-
     # Load input segmentation with halo
     seg_cv = CloudVolume(
         task["segmentation_channel"],
@@ -330,10 +331,7 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         mip=cast(Any, task["mip"]),
         fill_missing=True,
     )
-    # Align cuboid start and size to the CloudVolume chunk grid to ensure
-    # writes happen exactly on chunk boundaries. The input segmentation and
-    # output layers are guaranteed to share chunk_size, voxel_offset, and
-    # volume_size.
+    # Use the dataset's chunk grid for aligned writes; task generation now matches this chunk size.
     bounds_min, bounds_max = _bbox_min_max(getattr(seg_cv, "bounds"))
     voxel_offset = _vec3_from_any(getattr(seg_cv, "voxel_offset"))
     chunk_size = _vec3_from_any(getattr(seg_cv, "chunk_size"))
@@ -344,7 +342,7 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
     x_start, y_start, z_start = task["cuboid_start"]
     halo = int(task["halo"])
 
-    # Compute aligned start (floor to chunk boundary) and use chunk_size as radius
+    # Align to chunk grid (task chunk size is enforced to match dataset chunk size)
     ax = int(_align_to_chunk(int(x_start), voxel_offset[0], chunk_size[0]))
     ay = int(_align_to_chunk(int(y_start), voxel_offset[1], chunk_size[1]))
     az = int(_align_to_chunk(int(z_start), voxel_offset[2], chunk_size[2]))
@@ -367,19 +365,26 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
     )
 
     # Arrays are now in XYZ order (shape is X, Y, Z)
-    # Process supervoxels using the chunk-aligned size
-    sv_array, chunk_metadata = supervoxelize_array(
-        seg_data,
-        raw_data,
-        chunk_xyz=(arx, ary, arz),
-        halo=halo,
+    # Prepare halo-stripped chunks for processing and writing
+    write_slice_x = slice(halo, halo + arx)
+    write_slice_y = slice(halo, halo + ary)
+    write_slice_z = slice(halo, halo + arz)
+
+    seg_chunk = seg_data[write_slice_x, write_slice_y, write_slice_z]
+    raw_chunk = raw_data[write_slice_x, write_slice_y, write_slice_z]
+
+    id_packer = GlobalIDPacker(task["n_chunks_xyz"], min_local_bits=task["min_local_bits"])
+
+    sv_chunk, metadata = process_chunk(
+        seg_chunk,
+        raw_chunk,
+        task["chunk_index_xyz"],
+        id_packer,
         target_voxels_per_sv=task["target_voxels_per_sv"],
         min_voxels_per_sv=task["min_voxels_per_sv"],
         edge_sigma=task["edge_sigma"],
-        n_chunks_xyz=task["n_chunks_xyz"],
     )
 
-    # sv_array is already in XYZ order, ready to write
     # Write supervoxels to output channel (write region only, no halo)
     output_cv = CloudVolume(
         task["output_channel"],
@@ -387,35 +392,14 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         mip=cast(Any, task["mip"]),
     )
     
-    write_slice_x = slice(halo, halo + arx)
-    write_slice_y = slice(halo, halo + ary)
-    write_slice_z = slice(halo, halo + arz)
-
-    sv_write = sv_array[write_slice_x, write_slice_y, write_slice_z]
-    print("sv_write shape:", sv_write.shape)
-    output_cv[ax:ax + arx, ay:ay + ary, az:az + arz] = sv_write
+    output_cv[ax:ax + arx, ay:ay + ary, az:az + arz] = sv_chunk
     
-    # Aggregate metadata for this chunk
-    # Compute chunk index from aligned start and voxel offset so saved metadata
-    # matches actual write location.
-    cx = (ax - voxel_offset[0]) // chunk_size[0]
-    cy = (ay - voxel_offset[1]) // chunk_size[1]
-    cz = (az - voxel_offset[2]) // chunk_size[2]
-    num_sv = sum(m["num_sv"] for m in chunk_metadata)
-    total_parent_sv_ids: dict[int, list[int]] = {}
-    all_sv_sizes: list[int] = []
-    
-    for m in chunk_metadata:
-        all_sv_sizes.extend(m.get("sv_sizes", []))
-        for parent_id, gid_list in m.get("parent_sv_ids", {}).items():
-            lst = total_parent_sv_ids.setdefault(int(parent_id), [])
-            lst.extend(int(g) for g in gid_list)
-    
+    # Aggregate metadata (chunk index is already provided in the task)
     return {
-        "num_sv": num_sv,
-        "parent_sv_ids": total_parent_sv_ids,
-        "sv_sizes": all_sv_sizes,
-        "chunk_index": (cx, cy, cz),
+        "num_sv": metadata["num_sv"],
+        "parent_sv_ids": metadata["parent_sv_ids"],
+        "sv_sizes": metadata["sv_sizes"],
+        "chunk_index": tuple(task["chunk_index_xyz"]),
     }
     # except Exception as e:
     #     print(f"[ERROR]\t[supervoxel] {e}")
