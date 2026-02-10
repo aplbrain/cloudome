@@ -187,7 +187,7 @@ def provision_db_supervoxel(sqlite_db_path: str):
             chunk_y INTEGER,
             chunk_z INTEGER,
             num_sv INTEGER,
-            parent_counts TEXT,
+            parent_sv_ids TEXT,
             sv_sizes_json TEXT,
             PRIMARY KEY (graph_id, chunk_index)
         )
@@ -293,7 +293,7 @@ def _process_supervoxel_task(task_payload: SupervoxelTaskPayload, sqlite_db_path
             chunk_y INTEGER,
             chunk_z INTEGER,
             num_sv INTEGER,
-            parent_counts TEXT,
+            parent_sv_ids TEXT,
             sv_sizes_json TEXT,
             PRIMARY KEY (graph_id, chunk_index)
         )
@@ -304,11 +304,11 @@ def _process_supervoxel_task(task_payload: SupervoxelTaskPayload, sqlite_db_path
     
     if results:
         import json
-        parent_counts_json = json.dumps(results.get("parent_counts", {}))
+        parent_sv_ids_json = json.dumps(results.get("parent_sv_ids", {}))
         sv_sizes_json = json.dumps(results.get("sv_sizes", []))
         cursor.execute(
             """
-            INSERT INTO supervoxel_chunks (graph_id, chunk_index, chunk_x, chunk_y, chunk_z, num_sv, parent_counts, sv_sizes_json)
+            INSERT INTO supervoxel_chunks (graph_id, chunk_index, chunk_x, chunk_y, chunk_z, num_sv, parent_sv_ids, sv_sizes_json)
             VALUES (?, ?, ?, ?, ?, ?, ?, ?)
             """,
             (
@@ -318,7 +318,7 @@ def _process_supervoxel_task(task_payload: SupervoxelTaskPayload, sqlite_db_path
                 cy,
                 cz,
                 results["num_sv"],
-                parent_counts_json,
+                parent_sv_ids_json,
                 sv_sizes_json,
             ),
         )

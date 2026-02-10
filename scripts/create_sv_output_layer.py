@@ -47,7 +47,7 @@ def create_output_layer(
     # Extract properties from input layer
     num_channels = input_cv.num_channels
     voxel_offset = input_cv.voxel_offset
-    volume_shape = np.squeeze(input_cv.shape)
+    volume_shape = input_cv.shape[:-1]  
     resolution = input_cv.resolution
     encoding = input_cv.encoding if hasattr(input_cv, "encoding") else "raw"
     

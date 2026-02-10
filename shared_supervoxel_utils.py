@@ -260,7 +260,7 @@ def process_chunk(
 
     local_counter = 0
     cx, cy, cz = chunk_index_xyz
-    parent_counts: dict[int, int] = {}  # parent_id -> count of supervoxels from this parent
+    parent_sv_ids: dict[int, list[int]] = {}  # parent_id -> list of global supervoxel IDs
     sv_sizes: list[int] = []  # size of each supervoxel in this chunk
 
     for lab in labels_here:
@@ -283,8 +283,8 @@ def process_chunk(
             continue
 
         # Track this parent segment
-        if lab not in parent_counts:
-            parent_counts[lab] = 0
+        if lab not in parent_sv_ids:
+            parent_sv_ids[lab] = []
 
         # Assign global IDs
         for k in range(1, ncomp + 1):
@@ -298,11 +298,11 @@ def process_chunk(
             sv_mask = comp == k
             out[sv_mask] = gid
             sv_sizes.append(int(sv_mask.sum()))
-            parent_counts[lab] += 1
+            parent_sv_ids[lab].append(int(gid))
 
     metadata = {
         "num_sv": local_counter,
-        "parent_counts": parent_counts,  # parent_id -> num supervoxels spawned from it
+        "parent_sv_ids": parent_sv_ids,  # parent_id -> list of global SV ids spawned from it
         "sv_sizes": sv_sizes,  # list of sizes
     }
     return out, metadata
@@ -387,7 +387,7 @@ def generate_supervoxel_tasks(
     Yields SupervoxelTaskPayload for each chunk.
     """
     seg_data = CloudVolume(
-        segmentation_channel, mip=cast(Any, mip), cache=True, use_https=True, secrets=""
+        segmentation_channel, mip=cast(Any, mip), cache=True, use_https=True,
     )
 
     voxel_offset_raw = getattr(seg_data, "voxel_offset")
