@@ -101,7 +101,7 @@ def main():
         "--mip",
         type=str,
         default="0",
-        help="MIP level as single int ",
+        help="MIP level as single int or comma-separated floats",
     )
     parser.add_argument(
         "--data-type",
