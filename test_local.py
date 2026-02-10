@@ -107,6 +107,10 @@ def test_enqueue_supervoxel_tasks(graph_id=None):
 
     print(f"Initiating test {graph_id}")
     chunk_size = (128, 128, 128)
+    # Target bounding box around coordinates 6641, 5477, 5134
+    bbox_min = (6400, 5200, 5000)
+    bbox_max = (7000, 5700, 5300)
+    
     enqueue_supervoxel_tasks(
         fq_url=queue_url,
         graph_id=graph_id,
@@ -120,8 +124,8 @@ def test_enqueue_supervoxel_tasks(graph_id=None):
         halo=8,
         edge_sigma=1.5,
         chunk_xyz=chunk_size,
-        z_start=z_start,
-        z_end=z_end,
+        bbox_min_xyz=bbox_min,
+        bbox_max_xyz=bbox_max,
         enqueue_limit=10,
     )
     run_worker(queue_url, max_tasks=10, verbose=True)

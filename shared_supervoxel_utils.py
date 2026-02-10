@@ -378,11 +378,19 @@ def generate_supervoxel_tasks(
     chunk_xyz: tuple = (128, 128, 128),
     z_start: int | None = None,
     z_end: int | None = None,
+    bbox_min_xyz: tuple | None = None,
+    bbox_max_xyz: tuple | None = None,
     enqueue_limit: int | None = None,
     min_local_bits: int = 20,
 ) -> Iterator[SupervoxelTaskPayload]:
     """
-    Generate supervoxel tasks for all chunks in a segmentation volume.
+    Generate supervoxel tasks for chunks in a segmentation volume.
+    
+    Args:
+        bbox_min_xyz: Optional (x_min, y_min, z_min) to constrain chunk generation.
+        bbox_max_xyz: Optional (x_max, y_max, z_max) to constrain chunk generation.
+        z_start, z_end: Deprecated; use bbox_min_xyz/bbox_max_xyz instead.
+    
     Yields SupervoxelTaskPayload for each chunk.
     """
     seg_data = CloudVolume(
@@ -394,15 +402,30 @@ def generate_supervoxel_tasks(
     shape_raw = getattr(seg_data, "shape")
     volume_shape_xyz = tuple(int(s) for s in tuple(shape_raw)[:3])
 
+    # Default bounds: entire volume
     x_start = voxel_offset[0]
     x_stop = voxel_offset[0] + volume_shape_xyz[0]
     y_start = voxel_offset[1]
     y_stop = voxel_offset[1] + volume_shape_xyz[1]
+    z_start_voxel = 0
+    z_end_voxel = volume_shape_xyz[2]
 
-    z_start_voxel = 0 if z_start is None else max(0, min(volume_shape_xyz[2], z_start))
-    if z_end is None:
-        z_end_voxel = volume_shape_xyz[2]
-    else:
+    # Apply bounding box if provided
+    if bbox_min_xyz is not None:
+        x_start = max(x_start, bbox_min_xyz[0])
+        y_start = max(y_start, bbox_min_xyz[1])
+        z_start_voxel = max(z_start_voxel, bbox_min_xyz[2] - voxel_offset[2])
+    
+    if bbox_max_xyz is not None:
+        x_stop = min(x_stop, bbox_max_xyz[0])
+        y_stop = min(y_stop, bbox_max_xyz[1])
+        z_end_voxel = min(z_end_voxel, bbox_max_xyz[2] - voxel_offset[2])
+
+    # Fallback to z_start/z_end if bbox not provided
+    if bbox_min_xyz is None and z_start is not None:
+        z_start_voxel = max(0, min(volume_shape_xyz[2], z_start))
+    
+    if bbox_max_xyz is None and z_end is not None:
         z_end_voxel = max(z_start_voxel, min(volume_shape_xyz[2], z_end))
 
     z_start = voxel_offset[2] + z_start_voxel

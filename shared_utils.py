@@ -244,10 +244,22 @@ def _attach_supervoxel_parser(subparsers: argparse._SubParsersAction):
         help="Gaussian sigma for edge cost computation",
     )
     supervoxel_generate_parser.add_argument(
-        "--z-start", type=int, default=None, help="Starting Z chunk index"
+        "--z-start", type=int, default=None, help="Starting Z chunk index (deprecated, use --bbox-min-xyz)"
     )
     supervoxel_generate_parser.add_argument(
-        "--z-end", type=int, default=None, help="Ending Z chunk index"
+        "--z-end", type=int, default=None, help="Ending Z chunk index (deprecated, use --bbox-max-xyz)"
+    )
+    supervoxel_generate_parser.add_argument(
+        "--bbox-min-xyz",
+        type=str,
+        default=None,
+        help="Bounding box minimum as comma-separated x,y,z (e.g., 1000,2000,500)",
+    )
+    supervoxel_generate_parser.add_argument(
+        "--bbox-max-xyz",
+        type=str,
+        default=None,
+        help="Bounding box maximum as comma-separated x,y,z (e.g., 3000,4000,1500)",
     )
     supervoxel_generate_parser.add_argument(
         "--enqueue-limit",

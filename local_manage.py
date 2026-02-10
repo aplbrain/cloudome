@@ -341,6 +341,8 @@ def enqueue_supervoxel_tasks(
     chunk_xyz: tuple = (128, 128, 128),
     z_start: int | None = None,
     z_end: int | None = None,
+    bbox_min_xyz: tuple | None = None,
+    bbox_max_xyz: tuple | None = None,
     enqueue_limit: int | None = None,
 ):
     """
@@ -361,6 +363,8 @@ def enqueue_supervoxel_tasks(
             chunk_xyz=chunk_xyz,
             z_start=z_start,
             z_end=z_end,
+            bbox_min_xyz=bbox_min_xyz,
+            bbox_max_xyz=bbox_max_xyz,
             enqueue_limit=enqueue_limit,
         )
     ):
@@ -558,6 +562,15 @@ def main():
     elif args.namespace == "supervoxel":
         if args.command == "generate":
             chunk_xyz = (args.chunk_size_x, args.chunk_size_y, args.chunk_size_z)
+            
+            # Parse bounding box if provided
+            bbox_min_xyz = None
+            bbox_max_xyz = None
+            if args.bbox_min_xyz:
+                bbox_min_xyz = tuple(int(x) for x in args.bbox_min_xyz.split(","))
+            if args.bbox_max_xyz:
+                bbox_max_xyz = tuple(int(x) for x in args.bbox_max_xyz.split(","))
+            
             provision_db_supervoxel(args.sqlite_db_path)
             enqueue_supervoxel_tasks(
                 fq_url=args.queue_url,
@@ -574,6 +587,8 @@ def main():
                 chunk_xyz=chunk_xyz,
                 z_start=args.z_start,
                 z_end=args.z_end,
+                bbox_min_xyz=bbox_min_xyz,
+                bbox_max_xyz=bbox_max_xyz,
                 enqueue_limit=args.enqueue_limit,
             )
 
