@@ -73,49 +73,48 @@ class GlobalIDPacker:
 
 
 def chunk_grid_for_shape(
-    shape_zyx: Tuple[int, int, int], chunk_xyz: Tuple[int, int, int]
+    shape_xyz: Tuple[int, int, int], chunk_xyz: Tuple[int, int, int]
 ) -> Tuple[int, int, int]:
-    """Returns (n_chunks_x, n_chunks_y, n_chunks_z) given array shape in ZYX and chunk in XYZ."""
-    Z, Y, X = shape_zyx
-    cx, cy, cz = chunk_xyz  # user provided XYZ
-    # Convert to ZYX for math
-    nz = math.ceil(Z / cz)
-    ny = math.ceil(Y / cy)
+    """Returns (n_chunks_x, n_chunks_y, n_chunks_z) given array shape in XYZ and chunk in XYZ."""
+    X, Y, Z = shape_xyz
+    cx, cy, cz = chunk_xyz
     nx = math.ceil(X / cx)
+    ny = math.ceil(Y / cy)
+    nz = math.ceil(Z / cz)
     return (nx, ny, nz)
 
 
 def iter_chunk_bounds(
-    shape_zyx: Tuple[int, int, int],
+    shape_xyz: Tuple[int, int, int],
     chunk_xyz: Tuple[int, int, int],
     halo: int = 0,
 ) -> Iterator[Tuple[Tuple[int, int, int], Tuple[slice, slice, slice], Tuple[slice, slice, slice]]]:
     """
-    Yield per-chunk (chunk_index_xyz, write_slices_zyx, read_slices_zyx).
+    Yield per-chunk (chunk_index_xyz, write_slices_xyz, read_slices_xyz).
     read_slices includes halo; write_slices excludes halo (hard boundary).
+    All in XYZ order.
     """
-    Z, Y, X = shape_zyx
+    X, Y, Z = shape_xyz
     cx, cy, cz = chunk_xyz
-    # step in XYZ, translate to ZYX indexing
-    stepZ, stepY, stepX = cz, cy, cx
-    for cz_i, z0 in enumerate(range(0, Z, stepZ)):
-        for cy_i, y0 in enumerate(range(0, Y, stepY)):
-            for cx_i, x0 in enumerate(range(0, X, stepX)):
-                z1 = min(z0 + stepZ, Z)
-                y1 = min(y0 + stepY, Y)
-                x1 = min(x0 + stepX, X)
+    
+    for cx_i, x0 in enumerate(range(0, X, cx)):
+        for cy_i, y0 in enumerate(range(0, Y, cy)):
+            for cz_i, z0 in enumerate(range(0, Z, cz)):
+                x1 = min(x0 + cx, X)
+                y1 = min(y0 + cy, Y)
+                z1 = min(z0 + cz, Z)
 
                 # write (no halo)
-                wslc = (slice(z0, z1), slice(y0, y1), slice(x0, x1))
+                wslc = (slice(x0, x1), slice(y0, y1), slice(z0, z1))
 
                 # read (with halo, clipped to volume)
-                rz0 = max(0, z0 - halo)
-                ry0 = max(0, y0 - halo)
                 rx0 = max(0, x0 - halo)
-                rz1 = min(Z, z1 + halo)
-                ry1 = min(Y, y1 + halo)
+                ry0 = max(0, y0 - halo)
+                rz0 = max(0, z0 - halo)
                 rx1 = min(X, x1 + halo)
-                rslc = (slice(rz0, ry1), slice(ry0, ry1), slice(rx0, rx1))
+                ry1 = min(Y, y1 + halo)
+                rz1 = min(Z, z1 + halo)
+                rslc = (slice(rx0, rx1), slice(ry0, ry1), slice(rz0, rz1))
 
                 yield (cx_i, cy_i, cz_i), wslc, rslc
 
@@ -244,9 +243,9 @@ def process_chunk(
     edge_sigma: float = 1.5,
 ) -> Tuple[np.ndarray, dict[str, Any]]:
     """
-    seg_chunk: ZYX uint64 labels (0 = background) for THIS chunk only (no halo).
-    raw_chunk: ZYX raw intensities to guide splits via edges.
-    Returns (ZYX uint64 global IDs for this chunk, metadata dict with parent_counts and sv_sizes).
+    seg_chunk: XYZ uint64 labels (0 = background) for THIS chunk only (no halo), shape (X, Y, Z).
+    raw_chunk: XYZ raw intensities to guide splits via edges, shape (X, Y, Z).
+    Returns (XYZ uint64 global IDs for this chunk, metadata dict with parent_sv_ids and sv_sizes).
     """
     assert seg_chunk.ndim == 3
     out = np.zeros_like(seg_chunk, dtype=np.uint64)
@@ -319,12 +318,12 @@ def supervoxelize_array(
     n_chunks_xyz: Optional[Tuple[int, int, int]] = None,
 ) -> Tuple[np.ndarray, list[dict[str, Any]]]:
     """
-    seg: ZYX uint64 input segmentation (0=background).
-    raw: ZYX raw intensities to guide splitting.
-    Returns (ZYX uint64 array with global supervoxel IDs, list of per-chunk metadata).
+    seg: XYZ uint64 input segmentation (0=background), shape (X, Y, Z).
+    raw: XYZ raw intensities to guide splitting, shape (X, Y, Z).
+    Returns (XYZ uint64 array with global supervoxel IDs, list of per-chunk metadata).
     """
     assert seg.ndim == 3
-    Z, Y, X = seg.shape
+    X, Y, Z = seg.shape
     out = np.zeros_like(seg, dtype=np.uint64)
 
     if n_chunks_xyz is None:
@@ -339,15 +338,15 @@ def supervoxelize_array(
         raw_read = raw[rslc]
 
         # Crop to write region within the read chunk
-        wz0 = wslc[0].start - rslc[0].start
+        wx0 = wslc[0].start - rslc[0].start
         wy0 = wslc[1].start - rslc[1].start
-        wx0 = wslc[2].start - rslc[2].start
-        wz1 = wz0 + (wslc[0].stop - wslc[0].start)
+        wz0 = wslc[2].start - rslc[2].start
+        wx1 = wx0 + (wslc[0].stop - wslc[0].start)
         wy1 = wy0 + (wslc[1].stop - wslc[1].start)
-        wx1 = wx0 + (wslc[2].stop - wslc[2].start)
+        wz1 = wz0 + (wslc[2].stop - wslc[2].start)
 
-        seg_chunk = seg_read[wz0:wz1, wy0:wy1, wx0:wx1]
-        raw_chunk = raw_read[wz0:wz1, wy0:wy1, wx0:wx1]
+        seg_chunk = seg_read[wx0:wx1, wy0:wy1, wz0:wz1]
+        raw_chunk = raw_read[wx0:wx1, wy0:wy1, wz0:wz1]
 
         out_chunk, metadata = process_chunk(
             seg_chunk,
@@ -393,24 +392,24 @@ def generate_supervoxel_tasks(
     voxel_offset_raw = getattr(seg_data, "voxel_offset")
     voxel_offset = tuple(int(v) for v in tuple(voxel_offset_raw)[:3])
     shape_raw = getattr(seg_data, "shape")
-    volume_shape = tuple(int(s) for s in tuple(shape_raw)[:3])
+    volume_shape_xyz = tuple(int(s) for s in tuple(shape_raw)[:3])
 
     x_start = voxel_offset[0]
-    x_stop = voxel_offset[0] + volume_shape[0]
+    x_stop = voxel_offset[0] + volume_shape_xyz[0]
     y_start = voxel_offset[1]
-    y_stop = voxel_offset[1] + volume_shape[1]
+    y_stop = voxel_offset[1] + volume_shape_xyz[1]
 
-    z_start_voxel = 0 if z_start is None else max(0, min(volume_shape[2], z_start))
+    z_start_voxel = 0 if z_start is None else max(0, min(volume_shape_xyz[2], z_start))
     if z_end is None:
-        z_end_voxel = volume_shape[2]
+        z_end_voxel = volume_shape_xyz[2]
     else:
-        z_end_voxel = max(z_start_voxel, min(volume_shape[2], z_end))
+        z_end_voxel = max(z_start_voxel, min(volume_shape_xyz[2], z_end))
 
     z_start = voxel_offset[2] + z_start_voxel
     z_stop = voxel_offset[2] + z_end_voxel
 
     # Calculate chunk grid for the entire volume
-    n_chunks_xyz = chunk_grid_for_shape(volume_shape, chunk_xyz)
+    n_chunks_xyz = chunk_grid_for_shape(volume_shape_xyz, chunk_xyz)
     cx_max, cy_max, cz_max = n_chunks_xyz
 
     from intern.utils.parallel import block_compute

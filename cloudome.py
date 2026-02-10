@@ -366,10 +366,7 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         np.asarray(raw_cv[x_read_start:x_read_stop, y_read_start:y_read_stop, z_read_start:z_read_stop])
     )
 
-    # Convert XYZ to ZYX for processing
-    seg_data = np.moveaxis(seg_data, [0, 1, 2], [2, 1, 0])
-    raw_data = np.moveaxis(raw_data, [0, 1, 2], [2, 1, 0])
-
+    # Arrays are now in XYZ order (shape is X, Y, Z)
     # Process supervoxels using the chunk-aligned size
     sv_array, chunk_metadata = supervoxelize_array(
         seg_data,
@@ -382,22 +379,19 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         n_chunks_xyz=task["n_chunks_xyz"],
     )
 
-    # Convert back to XYZ for writing
-    sv_array_xyz = np.moveaxis(sv_array, [0, 1, 2], [2, 1, 0])
-
+    # sv_array is already in XYZ order, ready to write
     # Write supervoxels to output channel (write region only, no halo)
     output_cv = CloudVolume(
         task["output_channel"],
         cache=False,
         mip=cast(Any, task["mip"]),
     )
-
-    # Non-halo write region within the processed buffer
+    
     write_slice_x = slice(halo, halo + arx)
     write_slice_y = slice(halo, halo + ary)
     write_slice_z = slice(halo, halo + arz)
 
-    sv_write = sv_array_xyz[write_slice_x, write_slice_y, write_slice_z]
+    sv_write = sv_array[write_slice_x, write_slice_y, write_slice_z]
     print("sv_write shape:", sv_write.shape)
     output_cv[ax:ax + arx, ay:ay + ary, az:az + arz] = sv_write
     
