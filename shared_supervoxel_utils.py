@@ -141,6 +141,8 @@ def merge_small_regions(labels: np.ndarray, min_voxels: int) -> np.ndarray:
         mask = lbl == sid
         if not mask.any():
             continue
+        if int(mask.sum()) >= min_voxels:
+            continue
         # Border voxels (neighbors), collect neighbor ids & counts
         border = ndi.binary_dilation(mask, structure=struct) & (~mask)
         nbr_ids, counts = np.unique(lbl[border], return_counts=True)
@@ -193,7 +195,7 @@ def split_mask_into_supervoxels(
     # Heuristic spacing in voxels ~ cube root of target volume
     spacing = max(2, int(round((target_voxels_per_sv ** (1.0 / 3.0)) / 2.0)))
 
-    # Seed coordinates from distance maxima (limited to n_seeds)
+    # Seed coordinates from distance maxima (num_peaks is an upper bound only).
     coords = peak_local_max(
         dist,
         labels=mask,
@@ -201,15 +203,76 @@ def split_mask_into_supervoxels(
         num_peaks=n_seeds,
         exclude_border=False,
     )
-
     if coords.size == 0:
-        # fallback: single seed at the maximal distance point
-        maxpos = np.unravel_index(np.argmax(dist), dist.shape)
-        coords = np.array([maxpos], dtype=int)
+        coords = np.empty((0, mask.ndim), dtype=np.int32)
+    else:
+        coords = np.unique(coords.astype(np.int32, copy=False), axis=0)
+
+    # Ensure every disconnected piece has at least one seed; otherwise watershed
+    # can leave that component at label 0 and it disappears from the output.
+    cc_labels, n_cc = ndi.label(mask, structure=ndi.generate_binary_structure(mask.ndim, 1))
+    seeded_components: set[int] = set()
+    if coords.shape[0] > 0:
+        seeded_components = {int(v) for v in cc_labels[tuple(coords.T)] if int(v) > 0}
+    for cc_id in range(1, n_cc + 1):
+        if cc_id in seeded_components:
+            continue
+        cc_flat = np.flatnonzero(cc_labels.ravel() == cc_id)
+        if cc_flat.size == 0:
+            continue
+        local_best = int(np.argmax(dist.ravel()[cc_flat]))
+        seed_flat = int(cc_flat[local_best])
+        seed_idx = np.asarray(np.unravel_index(seed_flat, dist.shape), dtype=np.int32)
+        coords = np.vstack((coords, seed_idx[None, :]))
+        seeded_components.add(cc_id)
+
+    # Backfill seeds toward the requested count using farthest-point sampling.
+    # This avoids under-splitting smooth blobs where local maxima are sparse.
+    if coords.shape[0] < n_seeds:
+        max_dist = float(dist.max())
+        candidate_mask = mask
+        for ratio in (0.6, 0.4, 0.25, 0.1, 0.0):
+            maybe = mask & (dist >= (max_dist * ratio))
+            if int(maybe.sum()) >= n_seeds:
+                candidate_mask = maybe
+                break
+
+        candidates = np.argwhere(candidate_mask).astype(np.int32, copy=False)
+        if candidates.shape[0] == 0:
+            candidates = np.argwhere(mask).astype(np.int32, copy=False)
+        candidate_dist = dist[tuple(candidates.T)].astype(np.float32, copy=False)
+
+        available = np.ones(candidates.shape[0], dtype=bool)
+        nearest_seed_d2 = np.full(candidates.shape[0], np.inf, dtype=np.float32)
+
+        selected = {tuple(int(v) for v in row) for row in coords}
+        for i, row in enumerate(candidates):
+            if tuple(int(v) for v in row) in selected:
+                available[i] = False
+
+        for seed in coords:
+            delta = candidates - seed
+            d2 = np.sum(delta * delta, axis=1).astype(np.float32, copy=False)
+            nearest_seed_d2 = np.minimum(nearest_seed_d2, d2)
+
+        while coords.shape[0] < n_seeds and np.any(available):
+            # Favor spatial coverage first, then interior points.
+            score = nearest_seed_d2 + (candidate_dist * candidate_dist)
+            score[~available] = -np.inf
+            next_idx = int(np.argmax(score))
+            if not np.isfinite(score[next_idx]):
+                break
+            next_seed = candidates[next_idx]
+            coords = np.vstack((coords, next_seed[None, :]))
+            available[next_idx] = False
+
+            delta = candidates - next_seed
+            d2 = np.sum(delta * delta, axis=1).astype(np.float32, copy=False)
+            nearest_seed_d2 = np.minimum(nearest_seed_d2, d2)
 
     markers = np.zeros_like(mask, dtype=np.int32)
-    for i, (z, y, x) in enumerate(coords, start=1):
-        markers[z, y, x] = i
+    for i, coord in enumerate(coords, start=1):
+        markers[tuple(int(v) for v in coord)] = i
 
     # Build cost image
     if edge_cost is None:
@@ -224,6 +287,16 @@ def split_mask_into_supervoxels(
         cost = edge_weight * enorm + (1.0 - edge_weight) * (1.0 - dnorm)  # low inside, high at edges
 
     labels = watershed(cost, markers=markers, mask=mask)
+
+    missing = mask & (labels == 0)
+    if missing.any():
+        orphan_labels, n_orphans = ndi.label(
+            missing, structure=ndi.generate_binary_structure(mask.ndim, 1)
+        )
+        next_label = int(labels.max())
+        for orphan_id in range(1, n_orphans + 1):
+            next_label += 1
+            labels[orphan_labels == orphan_id] = next_label
 
     # Merge tiny supervoxels
     labels = merge_small_regions(labels, min_voxels=min_voxels)
