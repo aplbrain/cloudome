@@ -513,7 +513,6 @@ def generate_supervoxel_tasks(
 
     # Calculate chunk grid for the entire volume
     n_chunks_xyz = chunk_grid_for_shape(volume_shape_xyz, chunk_xyz)
-    cx_max, cy_max, cz_max = n_chunks_xyz
 
     from intern.utils.parallel import block_compute
 
