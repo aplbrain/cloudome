@@ -163,6 +163,58 @@ def merge_small_regions(labels: np.ndarray, min_voxels: int) -> np.ndarray:
     return lbl
 
 
+def dice_large_regions(
+    labels: np.ndarray,
+    max_voxels: int,
+) -> np.ndarray:
+    """
+    Force-split oversized labels into coarse geometric tiles.
+    This intentionally prioritizes smaller pieces over anatomical boundaries.
+    """
+    if max_voxels <= 0 or labels.size == 0:
+        return labels
+
+    out = labels.copy()
+    next_id = int(out.max())
+    # Rough cube side for a target volume of max_voxels.
+    tile_side = max(2, int(round(max_voxels ** (1.0 / 3.0))))
+
+    region_ids = np.unique(out)
+    region_ids = region_ids[region_ids != 0]
+    for rid in region_ids:
+        region = out == rid
+        region_size = int(region.sum())
+        if region_size <= max_voxels:
+            continue
+
+        coords = np.argwhere(region)
+        if coords.size == 0:
+            continue
+        mins = coords.min(axis=0)
+        rel = coords - mins
+        gx = (rel[:, 0] // tile_side).astype(np.int64)
+        gy = (rel[:, 1] // tile_side).astype(np.int64)
+        gz = (rel[:, 2] // tile_side).astype(np.int64)
+        shape = (
+            int(gx.max()) + 1,
+            int(gy.max()) + 1,
+            int(gz.max()) + 1,
+        )
+        tile_keys = np.ravel_multi_index((gx, gy, gz), dims=shape)
+        _, tile_inverse = np.unique(tile_keys, return_inverse=True)
+
+        out[region] = 0
+        for tile_idx in range(int(tile_inverse.max()) + 1):
+            tile_mask = tile_inverse == tile_idx
+            if not tile_mask.any():
+                continue
+            next_id += 1
+            vox = coords[tile_mask]
+            out[vox[:, 0], vox[:, 1], vox[:, 2]] = next_id
+
+    return out
+
+
 def split_mask_into_supervoxels(
     mask: np.ndarray,
     target_voxels_per_sv: int = 25000,
@@ -300,6 +352,8 @@ def split_mask_into_supervoxels(
 
     # Merge tiny supervoxels
     labels = merge_small_regions(labels, min_voxels=min_voxels)
+    # Enforce an upper size bound by dicing large regions into tiles.
+    labels = dice_large_regions(labels, max_voxels=target_voxels_per_sv)
 
     # Compact to 1..K
     labels, _, _ = relabel_sequential(labels)
@@ -308,7 +362,7 @@ def split_mask_into_supervoxels(
 
 def process_chunk(
     seg_chunk: np.ndarray,
-    raw_chunk: np.ndarray,
+    raw_chunk: Optional[np.ndarray],
     chunk_index_xyz: Tuple[int, int, int],
     id_packer: GlobalIDPacker,
     target_voxels_per_sv: int = 25000,
@@ -317,14 +371,18 @@ def process_chunk(
 ) -> Tuple[np.ndarray, dict[str, Any]]:
     """
     seg_chunk: XYZ uint64 labels (0 = background) for THIS chunk only (no halo), shape (X, Y, Z).
-    raw_chunk: XYZ raw intensities to guide splits via edges, shape (X, Y, Z).
+    raw_chunk: optional XYZ raw intensities to guide splits via edges, shape (X, Y, Z).
     Returns (XYZ uint64 global IDs for this chunk, metadata dict with parent_sv_ids and sv_sizes).
     """
     assert seg_chunk.ndim == 3
     out = np.zeros_like(seg_chunk, dtype=np.uint64)
 
-    # Edge cost from raw EM
-    edge_cost = ndi.gaussian_gradient_magnitude(raw_chunk.astype(np.float32), sigma=edge_sigma)
+    # Edge cost from raw EM (optional).
+    edge_cost = None
+    if raw_chunk is not None:
+        edge_cost = ndi.gaussian_gradient_magnitude(
+            raw_chunk.astype(np.float32), sigma=edge_sigma
+        )
 
     # Work label-by-label to ensure no SV crosses original object boundaries.
     labels_here = np.unique(seg_chunk)
@@ -348,7 +406,7 @@ def process_chunk(
             target_voxels_per_sv=target_voxels_per_sv,
             min_voxels=min_voxels_per_sv,
             edge_cost=edge_cost,
-            edge_weight=0.7,
+            edge_weight=0.7 if edge_cost is not None else 0.0,
         )
 
         ncomp = int(comp.max())
@@ -383,7 +441,7 @@ def process_chunk(
 
 def supervoxelize_array(
     seg: np.ndarray,
-    raw: np.ndarray,
+    raw: Optional[np.ndarray],
     chunk_xyz: Tuple[int, int, int] = (128, 128, 128),
     halo: int = 8,
     target_voxels_per_sv: int = 25000,
@@ -394,7 +452,7 @@ def supervoxelize_array(
 ) -> Tuple[np.ndarray, list[dict[str, Any]]]:
     """
     seg: XYZ uint64 input segmentation (0=background), shape (X, Y, Z).
-    raw: XYZ raw intensities to guide splitting, shape (X, Y, Z).
+    raw: optional XYZ raw intensities to guide splitting, shape (X, Y, Z).
     Returns (XYZ uint64 array with global supervoxel IDs, list of per-chunk metadata).
     """
     assert seg.ndim == 3
@@ -411,7 +469,7 @@ def supervoxelize_array(
 
     for (cx, cy, cz), wslc, rslc in iter_chunk_bounds(seg.shape, chunk_xyz, halo=halo):
         seg_read = seg[rslc]
-        raw_read = raw[rslc]
+        raw_read = raw[rslc] if raw is not None else None
 
         # Crop to write region within the read chunk
         wx0 = wslc[0].start - rslc[0].start
@@ -422,7 +480,9 @@ def supervoxelize_array(
         wz1 = wz0 + (wslc[2].stop - wslc[2].start)
 
         seg_chunk = seg_read[wx0:wx1, wy0:wy1, wz0:wz1]
-        raw_chunk = raw_read[wx0:wx1, wy0:wy1, wz0:wz1]
+        raw_chunk = (
+            raw_read[wx0:wx1, wy0:wy1, wz0:wz1] if raw_read is not None else None
+        )
 
         out_chunk, metadata = process_chunk(
             seg_chunk,
@@ -445,7 +505,7 @@ def generate_supervoxel_tasks(
     graph_id: str,
     segmentation_channel: str,
     output_channel: str,
-    raw_channel: str,
+    raw_channel: str | None,
     mip: list | int,
     target_voxels_per_sv: int = 25000,
     min_voxels_per_sv: int = 2000,
@@ -510,6 +570,30 @@ def generate_supervoxel_tasks(
 
     z_start = voxel_offset[2] + z_start_voxel
     z_stop = voxel_offset[2] + z_end_voxel
+
+    # Expand requested bounds to the chunk grid to keep output writes aligned.
+    def _align_down(v: int, offset: int, size: int) -> int:
+        return offset + ((v - offset) // size) * size
+
+    def _align_up(v: int, offset: int, size: int) -> int:
+        return offset + int(math.ceil((v - offset) / float(size))) * size
+
+    x_start = max(voxel_offset[0], _align_down(int(x_start), voxel_offset[0], chunk_xyz[0]))
+    y_start = max(voxel_offset[1], _align_down(int(y_start), voxel_offset[1], chunk_xyz[1]))
+    z_start = max(voxel_offset[2], _align_down(int(z_start), voxel_offset[2], chunk_xyz[2]))
+
+    x_stop = min(
+        voxel_offset[0] + volume_shape_xyz[0],
+        _align_up(int(x_stop), voxel_offset[0], chunk_xyz[0]),
+    )
+    y_stop = min(
+        voxel_offset[1] + volume_shape_xyz[1],
+        _align_up(int(y_stop), voxel_offset[1], chunk_xyz[1]),
+    )
+    z_stop = min(
+        voxel_offset[2] + volume_shape_xyz[2],
+        _align_up(int(z_stop), voxel_offset[2], chunk_xyz[2]),
+    )
 
     # Calculate chunk grid for the entire volume
     n_chunks_xyz = chunk_grid_for_shape(volume_shape_xyz, chunk_xyz)

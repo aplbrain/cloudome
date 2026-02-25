@@ -323,14 +323,16 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         mip=cast(Any, task["mip"]),
         fill_missing=True,
     )
-    raw_cv = CloudVolume(
-        task["raw_channel"],
-        use_https=True,
-        cache=False,
-        secrets="",
-        mip=cast(Any, task["mip"]),
-        fill_missing=True,
-    )
+    raw_cv = None
+    if task["raw_channel"]:
+        raw_cv = CloudVolume(
+            task["raw_channel"],
+            use_https=True,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=True,
+        )
     # Use the dataset's chunk grid for aligned writes; task generation now matches this chunk size.
     bounds_min, bounds_max = _bbox_min_max(getattr(seg_cv, "bounds"))
     voxel_offset = _vec3_from_any(getattr(seg_cv, "voxel_offset"))
@@ -347,7 +349,9 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
     ay = int(_align_to_chunk(int(y_start), voxel_offset[1], chunk_size[1]))
     az = int(_align_to_chunk(int(z_start), voxel_offset[2], chunk_size[2]))
 
-    arx, ary, arz = chunk_size
+    arx = int(task["cuboid_radius"][0])
+    ary = int(task["cuboid_radius"][1])
+    arz = int(task["cuboid_radius"][2])
 
     # Compute read bounds including halo, clamp to dataset bounds
     x_read_start = max(bounds_min[0], ax - halo)
@@ -360,18 +364,31 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
     seg_data = np.squeeze(
         np.asarray(seg_cv[x_read_start:x_read_stop, y_read_start:y_read_stop, z_read_start:z_read_stop])
     )
-    raw_data = np.squeeze(
-        np.asarray(raw_cv[x_read_start:x_read_stop, y_read_start:y_read_stop, z_read_start:z_read_stop])
-    )
+    raw_data = None
+    if raw_cv is not None:
+        raw_data = np.squeeze(
+            np.asarray(
+                raw_cv[
+                    x_read_start:x_read_stop,
+                    y_read_start:y_read_stop,
+                    z_read_start:z_read_stop,
+                ]
+            )
+        )
 
     # Arrays are now in XYZ order (shape is X, Y, Z)
-    # Prepare halo-stripped chunks for processing and writing
-    write_slice_x = slice(halo, halo + arx)
-    write_slice_y = slice(halo, halo + ary)
-    write_slice_z = slice(halo, halo + arz)
+    # Prepare write-region chunks using true local offsets. This avoids dropping
+    # voxels when halo reads are clipped at dataset boundaries.
+    write_slice_x = slice(ax - x_read_start, ax - x_read_start + arx)
+    write_slice_y = slice(ay - y_read_start, ay - y_read_start + ary)
+    write_slice_z = slice(az - z_read_start, az - z_read_start + arz)
 
     seg_chunk = seg_data[write_slice_x, write_slice_y, write_slice_z]
-    raw_chunk = raw_data[write_slice_x, write_slice_y, write_slice_z]
+    raw_chunk = (
+        raw_data[write_slice_x, write_slice_y, write_slice_z]
+        if raw_data is not None
+        else None
+    )
 
     id_packer = GlobalIDPacker(task["n_chunks_xyz"], min_local_bits=task["min_local_bits"])
 

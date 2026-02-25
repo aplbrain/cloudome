@@ -101,12 +101,15 @@ def test_enqueue_connectome_tasks(graph_id=None):
 
 
 def test_enqueue_supervoxel_tasks(graph_id=None):
+
+    #TODO: Add connected component to ensure supervoxels are split according to inner-chunk boundaries
     if not graph_id:
         now = int(time.time())
         graph_id = f"test-supervoxel-{now}"
 
     print(f"Initiating test {graph_id}")
     chunk_size = (128, 128, 128)
+
     # Target bounding box around coordinates 6641, 5477, 5134
     bbox_min = (6400, 5200, 5000)
     bbox_max = (7000, 5700, 5300)
@@ -120,7 +123,7 @@ def test_enqueue_supervoxel_tasks(graph_id=None):
         sqlite_db_path=sqlite_db_path,
         mip=0,
         target_voxels_per_sv=2000,
-        min_voxels_per_sv=50,
+        min_voxels_per_sv=100,
         halo=8,
         edge_sigma=1.5,
         chunk_xyz=chunk_size,
@@ -175,6 +178,6 @@ if __name__ == "__main__":
 
     # connectome_graph_id = test_enqueue_connectome_tasks()
     # test_results("synapse_edges", connectome_graph_id, correct_num_lines_for_connectome_task)
-
     supervoxel_graph_id = test_enqueue_supervoxel_tasks()
     test_results("supervoxel_chunks", supervoxel_graph_id, correct_num_lines_for_supervoxel_task)
+

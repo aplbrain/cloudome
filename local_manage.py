@@ -331,7 +331,7 @@ def enqueue_supervoxel_tasks(
     graph_id: str,
     segmentation_channel: str,
     output_channel: str,
-    raw_channel: str,
+    raw_channel: str | None,
     mip: list | int,
     sqlite_db_path: str,
     target_voxels_per_sv: int = 25000,

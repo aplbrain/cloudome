@@ -210,8 +210,8 @@ def _attach_supervoxel_parser(subparsers: argparse._SubParsersAction):
     supervoxel_generate_parser.add_argument(
         "--raw-channel",
         type=str,
-        required=True,
-        help="S3 path to raw EM data for edge guidance",
+        default=None,
+        help="Optional S3 path to raw EM data for edge-guided splitting",
     )
     supervoxel_generate_parser.add_argument(
         "--chunk-size-x", type=int, default=128, help="Chunk size for X dimension"

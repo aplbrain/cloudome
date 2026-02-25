@@ -51,7 +51,7 @@ class SupervoxelTaskPayload(TypedDict):
     n_chunks_xyz: tuple[int, int, int]  # total chunks (nx, ny, nz) for ID packer init
     segmentation_channel: str  # input segmentation
     output_channel: str  # destination for supervoxels
-    raw_channel: str  # guidance for watershed (required)
+    raw_channel: str | None  # optional guidance for watershed
     mip: MipType
     target_voxels_per_sv: int  # ~25000
     min_voxels_per_sv: int  # ~2000
