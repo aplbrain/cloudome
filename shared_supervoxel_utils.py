@@ -533,9 +533,9 @@ def generate_supervoxel_tasks(
         segmentation_channel, mip=cast(Any, mip), cache=True, use_https=True,
     )
     volume_chunk_xyz = tuple(int(c) for c in tuple(getattr(seg_data, "chunk_size"))[:3])
-    if tuple(chunk_xyz) != volume_chunk_xyz:
-        print(f"[supervoxel] Adjusting chunk size to volume chunk size {volume_chunk_xyz} (was {chunk_xyz})")
-        chunk_xyz = volume_chunk_xyz
+    # if tuple(chunk_xyz) != volume_chunk_xyz:
+    #     print(f"[supervoxel] Adjusting chunk size to volume chunk size {volume_chunk_xyz} (was {chunk_xyz})")
+    #     chunk_xyz = volume_chunk_xyz
 
     voxel_offset_raw = getattr(seg_data, "voxel_offset")
     voxel_offset = tuple(int(v) for v in tuple(voxel_offset_raw)[:3])
