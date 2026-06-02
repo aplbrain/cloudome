@@ -228,7 +228,8 @@ def split_mask_into_supervoxels(
     If edge_cost is provided (e.g., gradient magnitude of raw image), the watershed
     cost is blended:  cost = edge_weight*edge_cost + (1-edge_weight)*(-distance)
     """
-    vox = int(mask.sum())
+    mask = mask.astype(bool, copy=False)
+    vox = int(np.count_nonzero(mask))
     if vox == 0:
         return np.zeros_like(mask, dtype=np.int32)
 
@@ -247,7 +248,7 @@ def split_mask_into_supervoxels(
     # Heuristic spacing in voxels ~ cube root of target volume
     spacing = max(2, int(round((target_voxels_per_sv ** (1.0 / 3.0)) / 2.0)))
 
-    # Seed coordinates from distance maxima (num_peaks is an upper bound only).
+    # Seed coordinates from distance maxima
     coords = peak_local_max(
         dist,
         labels=mask,
@@ -260,39 +261,63 @@ def split_mask_into_supervoxels(
     else:
         coords = np.unique(coords.astype(np.int32, copy=False), axis=0)
 
-    # Ensure every disconnected piece has at least one seed; otherwise watershed
-    # can leave that component at label 0 and it disappears from the output.
+    # Ensure every disconnected piece has at least one seed
+    # Use bounding slices so we only inspect each connected component locally
     cc_labels, n_cc = ndi.label(mask, structure=ndi.generate_binary_structure(mask.ndim, 1))
+    cc_slices = ndi.find_objects(cc_labels)
+
+    seed_list = [coords[i] for i in range(coords.shape[0])]
     seeded_components: set[int] = set()
     if coords.shape[0] > 0:
         seeded_components = {int(v) for v in cc_labels[tuple(coords.T)] if int(v) > 0}
+
     for cc_id in range(1, n_cc + 1):
         if cc_id in seeded_components:
             continue
-        cc_flat = np.flatnonzero(cc_labels.ravel() == cc_id)
-        if cc_flat.size == 0:
+
+        sl = cc_slices[cc_id - 1]
+        if sl is None:
             continue
-        local_best = int(np.argmax(dist.ravel()[cc_flat]))
-        seed_flat = int(cc_flat[local_best])
-        seed_idx = np.asarray(np.unravel_index(seed_flat, dist.shape), dtype=np.int32)
-        coords = np.vstack((coords, seed_idx[None, :]))
+
+        cc_sub = (cc_labels[sl] == cc_id)
+        if not cc_sub.any():
+            continue
+
+        dist_sub = dist[sl]
+        # Pick the voxel with the largest distance inside this component.
+        local_best = int(np.argmax(np.where(cc_sub, dist_sub, -np.inf)))
+        local_idx = np.asarray(np.unravel_index(local_best, dist_sub.shape), dtype=np.int32)
+        global_idx = local_idx + np.array([s.start for s in sl], dtype=np.int32)
+
+        seed_list.append(global_idx)
         seeded_components.add(cc_id)
 
-    # Backfill seeds toward the requested count using farthest-point sampling.
+    coords = np.asarray(seed_list, dtype=np.int32)
+
+    # Backfill seeds toward the requested count using bounded farthest-point sampling.
     # This avoids under-splitting smooth blobs where local maxima are sparse.
     if coords.shape[0] < n_seeds:
         max_dist = float(dist.max())
         candidate_mask = mask
         for ratio in (0.6, 0.4, 0.25, 0.1, 0.0):
             maybe = mask & (dist >= (max_dist * ratio))
-            if int(maybe.sum()) >= n_seeds:
+            if int(np.count_nonzero(maybe)) >= n_seeds:
                 candidate_mask = maybe
                 break
 
         candidates = np.argwhere(candidate_mask).astype(np.int32, copy=False)
         if candidates.shape[0] == 0:
             candidates = np.argwhere(mask).astype(np.int32, copy=False)
+
         candidate_dist = dist[tuple(candidates.T)].astype(np.float32, copy=False)
+
+        # Cap the candidate pool so the greedy update stays bounded.
+        # Keep the most interior candidates first.
+        max_candidates = max(4096, 8 * n_seeds)
+        if candidates.shape[0] > max_candidates:
+            keep_idx = np.argpartition(candidate_dist, -max_candidates)[-max_candidates:]
+            candidates = candidates[keep_idx]
+            candidate_dist = candidate_dist[keep_idx]
 
         available = np.ones(candidates.shape[0], dtype=bool)
         nearest_seed_d2 = np.full(candidates.shape[0], np.inf, dtype=np.float32)
@@ -308,12 +333,12 @@ def split_mask_into_supervoxels(
             nearest_seed_d2 = np.minimum(nearest_seed_d2, d2)
 
         while coords.shape[0] < n_seeds and np.any(available):
-            # Favor spatial coverage first, then interior points.
             score = nearest_seed_d2 + (candidate_dist * candidate_dist)
             score[~available] = -np.inf
             next_idx = int(np.argmax(score))
             if not np.isfinite(score[next_idx]):
                 break
+
             next_seed = candidates[next_idx]
             coords = np.vstack((coords, next_seed[None, :]))
             available[next_idx] = False
@@ -323,23 +348,23 @@ def split_mask_into_supervoxels(
             nearest_seed_d2 = np.minimum(nearest_seed_d2, d2)
 
     markers = np.zeros_like(mask, dtype=np.int32)
-    for i, coord in enumerate(coords, start=1):
-        markers[tuple(int(v) for v in coord)] = i
+    if coords.shape[0] > 0:
+        markers[tuple(coords.T)] = np.arange(1, coords.shape[0] + 1, dtype=np.int32)
 
     # Build cost image
     if edge_cost is None:
         cost = -dist
     else:
-        # Normalize both terms to [0,1] to keep units compatible
         dnorm = dist / (dist.max() + 1e-6)
-        enorm = edge_cost.astype(np.float32)
-        emx = enorm.max()
+        enorm = edge_cost.astype(np.float32, copy=False)
+        emx = float(enorm.max())
         if emx > 0:
             enorm = enorm / emx
-        cost = edge_weight * enorm + (1.0 - edge_weight) * (1.0 - dnorm)  # low inside, high at edges
+        cost = edge_weight * enorm + (1.0 - edge_weight) * (1.0 - dnorm)
 
     labels = watershed(cost, markers=markers, mask=mask)
 
+    # Fill any unassigned islands.
     missing = mask & (labels == 0)
     if missing.any():
         orphan_labels, n_orphans = ndi.label(
@@ -352,6 +377,7 @@ def split_mask_into_supervoxels(
 
     # Merge tiny supervoxels
     labels = merge_small_regions(labels, min_voxels=min_voxels)
+
     # Enforce an upper size bound by dicing large regions into tiles.
     labels = dice_large_regions(labels, max_voxels=target_voxels_per_sv)
 
@@ -413,23 +439,22 @@ def process_chunk(
         if ncomp == 0:
             continue
 
-        # Track this parent segment
-        if parent_id not in parent_sv_ids:
-            parent_sv_ids[parent_id] = []
-
-        # Assign global IDs
+        gids = np.empty(ncomp + 1, dtype=np.uint64)  # 0 unused
         for k in range(1, ncomp + 1):
             local_counter += 1
             if local_counter > id_packer.max_local:
-                raise RuntimeError(
-                    f"Exceeded local_id capacity ({id_packer.max_local}) for chunk {chunk_index_xyz}. "
-                    "Increase target_voxels_per_sv or allocate more local bits."
-                )
-            gid = id_packer.encode(cx, cy, cz, local_counter)
-            sv_mask = comp == k
-            out[sv_mask] = gid
-            sv_sizes.append(int(sv_mask.sum()))
-            parent_sv_ids[parent_id].append(int(gid))
+                raise RuntimeError(...)
+            gids[k] = id_packer.encode(cx, cy, cz, local_counter)
+
+        # Assign all voxels for this label at once
+        out[mask] = gids[comp[mask]]
+
+        # Sizes without per-component full scans
+        sizes = np.bincount(comp[mask].ravel(), minlength=ncomp + 1)[1:]
+        sv_sizes.extend(sizes.tolist())
+
+        # Parent mapping
+        parent_sv_ids.setdefault(parent_id, []).extend(gids[1:].astype(int).tolist())
 
     metadata = {
         "num_sv": local_counter,
