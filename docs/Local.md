@@ -2,12 +2,20 @@
 
 ## Contactomes
 
-To generate contactomes and connectomes locally, you can use the following commands. This will not deploy any cloud resources (no SQS, no Lambdas).
+To generate contactomes, connectomes, and volumes locally, you can use the following commands. This will not deploy any cloud resources (no SQS, no Lambdas).
 
 ### Provision the queue:
 
 ```bash
 uv run local_manage.py contactome generate --graph-id test0 --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
+```
+
+## Volume
+
+## Provision the queue:
+
+```bash
+uv run local_manage.py --sqlite-db-path zebrafish-nuclei-volume.db --mip 72,72,168 volume generate --graph-id zebrafish-nuclei-volume --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/nuclei/ --block-size-x 512 --block-size-y 512 --block-size-z 128
 ```
 
 ## Connectomes
@@ -17,10 +25,6 @@ uv run local_manage.py contactome generate --graph-id test0 --segmentation-chann
 ```bash
 uv run local_manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses --output-file synapse-centroids-test0.csv
 ```
-
-## Volume
-
-
 
 ### Provision the queue:
 
@@ -46,7 +50,7 @@ uv run local_manage.py worker --dequeue-limit 10
 
 
 
-## simplify a contactome SQLite database
+## Simplify a contactome SQLite database
 
 If you already have a populated contactome SQLite database (for example the
 worker output written by `local_manage.py`), you can aggregate it in-place or
