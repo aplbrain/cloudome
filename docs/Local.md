@@ -2,12 +2,20 @@
 
 ## Contactomes
 
-To generate contactomes and connectomes locally, you can use the following commands. This will not deploy any cloud resources (no SQS, no Lambdas).
+To generate contactomes, connectomes, and volumes locally, you can use the following commands. This will not deploy any cloud resources (no SQS, no Lambdas).
 
 ### Provision the queue:
 
 ```bash
 uv run local_manage.py contactome generate --graph-id test0 --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
+```
+
+## Volume
+
+## Provision the queue:
+
+```bash
+uv run local_manage.py --sqlite-db-path zebrafish-nuclei-volume.db --mip 72,72,168 volume generate --graph-id zebrafish-nuclei-volume --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/nuclei/ --block-size-x 512 --block-size-y 512 --block-size-z 128
 ```
 
 ## Connectomes
@@ -42,7 +50,7 @@ uv run local_manage.py worker --dequeue-limit 10
 
 
 
-## simplify a contactome SQLite database
+## Simplify a contactome SQLite database
 
 If you already have a populated contactome SQLite database (for example the
 worker output written by `local_manage.py`), you can aggregate it in-place or
@@ -67,6 +75,15 @@ Omit `--in-place` to write a new `*_simplified.db` alongside the source file,
 or pass `--output-db /tmp/contactome_simple.db --force` to control the output
 path explicitly.
 
+## Simplify a volume SQLite database
+
+A similar script is provided for volume. The --inplace and --backup flags will also work here. 
+
+```bash
+uv run python3 scripts/simplify_volume_sqlite_db.py /path/to/volume.db  --output-db /path/to/volume_simplified.db
+
+```
+
 ## Merge sqlite db shards
 
 If you have a set of sharded sqlite db files (e.g. produced by workers with
@@ -78,3 +95,10 @@ uv run scripts/merge_sqlite_dbs.py --out /path/to/merged.db --dir /path/to/shard
 
 This will scan the specified directory for all `.db` files and merge the components into a single output database.
 
+## Export as CSV
+
+If your results are of reasonable size, export them as a CSV.
+
+```bash
+uv run scripts/download_table_as_csv.py --db-path /path/to/db_simplified.db --csv-path /path/to/db.csv --table_name contactome_edges
+```
