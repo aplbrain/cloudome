@@ -3,9 +3,9 @@ from local_manage import (
     provision_db_synapses,
     enqueue_cuboidwise_tasks_for_contactome_or_volume,
     enqueue_centroids_from_file,
-    run_worker
+    run_worker,
 )
-from database import (
+from cloudome.database import (
     SynapseEdgeResultsModel,
     SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
@@ -20,7 +20,7 @@ import sqlite3
 # If you change these params, you must also change lines 25+26
 block_size = (64, 64, 32)
 queue_url = "fq://q-CloudomeTasks"
-sqlite_db_path= "cloudome-results.db"
+sqlite_db_path = "cloudome-results.db"
 segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/"
 synapse_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/"
 centroids_file = "test/synapse-centroids.csv"

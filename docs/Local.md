@@ -1,32 +1,34 @@
 # Local Use
 
-## Contactomes
+## 1. Queue one job per chunk for a chosen computation
 
 To generate contactomes, connectomes, and volumes locally, you can use the following commands. This will not deploy any cloud resources (no SQS, no Lambdas).
 
-### Provision the queue:
+### Contactomes
+
+Provision the queue:
 
 ```bash
 uv run local_manage.py contactome generate --graph-id test0 --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
 ```
 
-## Volume
+### Volume
 
-## Provision the queue:
+Provision the queue:
 
 ```bash
 uv run local_manage.py --sqlite-db-path zebrafish-nuclei-volume.db --mip 72,72,168 volume generate --graph-id zebrafish-nuclei-volume --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/nuclei/ --block-size-x 512 --block-size-y 512 --block-size-z 128
 ```
 
-## Connectomes
+### Connectomes
 
-### Generate synapse centroids file:
+Generate synapse centroids file:
 
 ```bash
 uv run local_manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses --output-file synapse-centroids-test0.csv
 ```
 
-### Provision the queue:
+Provision the queue:
 
 ```bash
 uv run local_manage.py --sqlite-db-path synapse_edges_test0.db synapses enqueue --graph-id connectome-test0 --centroids-file synapse-centroids-test0.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
@@ -36,7 +38,9 @@ uv run local_manage.py --sqlite-db-path synapse_edges_test0.db synapses enqueue 
 
 On highly parallel systems such as shared-filesystem clusters, you will likely want to shard the sqlite DB. Pass `--shard-sqlite` to any command that takes a database path (e.g. `--sqlite-db-path synapse_edges_test0.db --shard-sqlite`). This will create a unique sqlite DB per worker process.
 
-## Running workers
+## 2. Run workers
+
+This command will start a single worker to execute the jobs that were just queued. It's recommended to run multiple workers using whatever parallellized approach you prefer. Tmux and Screen are great for local runs while the most popular software for HPC clusters is Slurm.
 
 ```bash
 uv run local_manage.py worker
@@ -48,12 +52,13 @@ You can also limit the number of tasks processed by each worker for testing purp
 uv run local_manage.py worker --dequeue-limit 10
 ```
 
+The result will be a SQLite DB (or set of DBs, if sharded) containing the aggregated outputs of each worker.
 
+## 3. Simplify a chunk-by-chunk SQLite database
 
-## Simplify a contactome SQLite database
+### Contactomes
 
-If you already have a populated contactome SQLite database (for example the
-worker output written by `local_manage.py`), you can aggregate it in-place or
+Once you have a populated contactome SQLite database, you can aggregate it in-place or
 write a new compact database that only retains `(pre, post, weight)` columns:
 
 ```bash
@@ -62,7 +67,6 @@ uv run python3 scripts/simplify_contactome_sqlite_db.py \
     --output-db /path/to/contactome_simplified.db
 
 ```
-
 
 Or in-place (saving a backup copy as a renamed table):
 ```bash
@@ -75,16 +79,15 @@ Omit `--in-place` to write a new `*_simplified.db` alongside the source file,
 or pass `--output-db /tmp/contactome_simple.db --force` to control the output
 path explicitly.
 
-## Simplify a volume SQLite database
+### Volumes
 
 A similar script is provided for volume. The --inplace and --backup flags will also work here. 
 
 ```bash
 uv run python3 scripts/simplify_volume_sqlite_db.py /path/to/volume.db  --output-db /path/to/volume_simplified.db
-
 ```
 
-## Merge sqlite db shards
+## 4. Merge SQLite DB shards
 
 If you have a set of sharded sqlite db files (e.g. produced by workers with
 `--shard-sqlite`), you can merge them into a single sqlite db file using:
@@ -95,7 +98,7 @@ uv run scripts/merge_sqlite_dbs.py --out /path/to/merged.db --dir /path/to/shard
 
 This will scan the specified directory for all `.db` files and merge the components into a single output database.
 
-## Export as CSV
+## 5. Export as CSV
 
 If your results are of reasonable size, export them as a CSV.
 

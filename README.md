@@ -16,7 +16,7 @@ uv run zappa update
 To initialize required resources such as DynamoDB tables, run:
 
 ```bash
-uv run python3 manage.py initialize
+uv run python manage.py initialize
 ```
 
 Note: SQS queues are not yet provisioned automatically and must be created manually.
@@ -26,7 +26,7 @@ Note: SQS queues are not yet provisioned automatically and must be created manua
 ### populate the task queue
 
 ```bash
-uv run python3 manage.py contactome generate # optionally test with --enqueue-limit 1
+uv run python manage.py contactome generate # optionally test with --enqueue-limit 1
 ```
 
 ### wait...
@@ -39,7 +39,7 @@ AWS_REGION=us-east-1 aws sqs get-queue-attributes --queue-url "https://sqs.us-ea
 ### collect results
 
 ```bash
-uv run python3 manage.py export example_graph_id contactome_40k.csv
+uv run python manage.py export example_graph_id contactome_40k.csv
 ```
 
 ### convert to a weighted contactome edgelist
@@ -47,7 +47,7 @@ uv run python3 manage.py export example_graph_id contactome_40k.csv
 To convert the raw contactome data into a weighted edgelist, use the `simplify` command:
 
 ```bash
-uv run python3 manage.py contactome simplify --raw-file contactome_40k.csv --output-file pre_post_weights.csv
+uv run python manage.py contactome simplify --raw-file contactome_40k.csv --output-file pre_post_weights.csv
 ```
 
 This will leave you with `pre_post_weights.csv`, which contains aggregated weights for each (pre, post) pair.
@@ -63,7 +63,7 @@ Global flags: you can pass a global `--mip` (single int or comma-separated) and 
 Enqueue cuboid-wise volume tasks over your segmentation channel. Adjust block sizes and Z range as needed.
 
 ```bash
-uv run python3 manage.py volume generate \
+uv run python manage.py volume generate \
 	--graph-id volume-40k \
 	--segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ \
 	--block-size-x 64 --block-size-y 64 --block-size-z 32 \
@@ -93,7 +93,7 @@ AWS_REGION=us-east-1 aws sqs get-queue-attributes \
 Export raw results for a given `graph_id` to CSV:
 
 ```bash
-uv run python3 manage.py export volume-40k volume_raw.csv
+uv run python manage.py export volume-40k volume_raw.csv
 ```
 
 ### simplify to per-seg totals
@@ -101,7 +101,7 @@ uv run python3 manage.py export volume-40k volume_raw.csv
 Aggregate voxel counts per segmentation ID from the exported CSV:
 
 ```bash
-uv run python3 manage.py volume simplify \
+uv run python manage.py volume simplify \
 	--raw-file volume_raw.csv \
 	--output-file seg_voxel_counts.csv
 ```
@@ -115,11 +115,11 @@ seg_id,voxel_count
 ## generate a connectome
 
 ```bash
-uv run manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --output-file synapse-centroids-40k.csv --mask post
+uv run python manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --output-file synapse-centroids-40k.csv --mask post
 
-uv run manage.py synapses enqueue --graph-id connectome-40k --centroids-file synapse-centroids-40k.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ --enqueue-limit 10
+uv run python manage.py synapses enqueue --graph-id connectome-40k --centroids-file synapse-centroids-40k.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ --enqueue-limit 10
 
-uv run manage.py export connectome-40k synapses_40k.csv
+uv run python manage.py export connectome-40k synapses_40k.csv
 
-uv run manage.py synapses simplify --raw-file synapses_40k.csv --output-file synapse_weights.csv
+uv run python manage.py synapses simplify --raw-file synapses_40k.csv --output-file synapse_weights.csv
 ```
