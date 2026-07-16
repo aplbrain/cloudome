@@ -1,125 +1,34 @@
-# cloudome
+# Cloudome
 
-## install and configure
+A command line utility for executing highly parallelizable jobs on volumetric neuroscience datasets using cloud or HPC resources. Currently supports connectomes, contactomes, cell volume measurements, and more. Uses a producer-consumer model to split a task into many subtasks, add them to a queue, scale execution according to available resources, then unite the many results into a single database. 
 
-These were run on Ubuntu. MacOS (ARM) won't work.
+See [Docs](./docs) for instructions on getting started. Currently, only Neuroglancer precomputed format is supported.
 
-```bash
-uv run zappa deploy
-uv run zappa schedule
-# then for incremental updates,
-uv run zappa update
-```
+<img src="docs/cover-image.png"/>
 
-## provisioning resources
+## Features
+| Data product | Requirements | About |
+| --- | --- | --- |
+| Connectome | segmentation layer, synapse layer with pre and post annotated separately | Connectome tasks are split into one subtask per synapse. The calculation determines what two cells are participating in the given synapse. Results are aggregated by concatenation. |
+| Contactomes | segmentation layer | Contactome tasks are split into subtasks volumetrically according to a given chunk size. Results are aggregated with an intelligent chunking method that ensures no duplicate edges due to chunk boundary artifacts. |
+| Cell volume measurement | segmentation layer | Volume tasks are split into subtasks volumetrically according to a given chunk size. Volume measurements from each chunk are summed to produce a single value per cell. |
+| Custom function | you write yourself! | |
 
-To initialize required resources such as DynamoDB tables, run:
+We recommend running connectomes on AWS and chunk-wise calculations on an HPC cluster, as connectome subtasks are very small and therefore good candidates for extreme parallelization. Chunk-wise calculations will become more efficient as chunk size increases and are therefore better candidates for an HPC cluster.
 
-```bash
-uv run python manage.py initialize
-```
+See [AWS](./docs/AWS.md) for instructions on using Zappa with the AWS tools SQS, Lambda, and DynamoDB to complete a job. Results can be downloaded from DynamoDB as a CSV. With this setup, connectomes cost about $1/25k synapses to compute, and execution time is limited only by how quickly jobs can be queued from the local machine.
 
-Note: SQS queues are not yet provisioned automatically and must be created manually.
+See [Local](./docs/Local.md) for instructions on completing a job using a local HPC cluster. Results are pushed to a SQLite DB, with an optional script to export as CSV.
 
-## generate a contactome
 
-### populate the task queue
-
-```bash
-uv run python manage.py contactome generate # optionally test with --enqueue-limit 1
-```
-
-### wait...
-
-```bash
-# this will someday go to zero:
-AWS_REGION=us-east-1 aws sqs get-queue-attributes --queue-url "https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs" --attribute-names ApproximateNumberOfMessagesNotVisible
-```
-
-### collect results
-
-```bash
-uv run python manage.py export example_graph_id contactome_40k.csv
-```
-
-### convert to a weighted contactome edgelist
-
-To convert the raw contactome data into a weighted edgelist, use the `simplify` command:
-
-```bash
-uv run python manage.py contactome simplify --raw-file contactome_40k.csv --output-file pre_post_weights.csv
-```
-
-This will leave you with `pre_post_weights.csv`, which contains aggregated weights for each (pre, post) pair.
-
-## compute per-segment volume
-
-End-to-end flow for computing voxel counts per segmentation ID across the volume.
-
-Global flags: you can pass a global `--mip` (single int or comma-separated) and `--sqs-url` to all commands below.
-
-### populate the task queue
-
-Enqueue cuboid-wise volume tasks over your segmentation channel. Adjust block sizes and Z range as needed.
-
-```bash
-uv run python manage.py volume generate \
-	--graph-id volume-40k \
-	--segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ \
-	--block-size-x 64 --block-size-y 64 --block-size-z 32 \
-	--z-start 0 --z-end 1000 \
-	--enqueue-limit 10  # optional for a quick smoke test
-```
-
-Each task processes a cuboid and the worker emits DynamoDB items like:
-
-```
-graph_id=volume-40k
-synapse_id=vol_x{xs}_y{ys}_z{zs}_seg{SEGID}_v{VOXEL_COUNT}
-```
-
-### wait...
-
-Monitor queue depth while workers process jobs:
-
-```bash
-AWS_REGION=us-east-1 aws sqs get-queue-attributes \
-	--queue-url "https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs" \
-	--attribute-names ApproximateNumberOfMessagesNotVisible
-```
-
-### collect results
-
-Export raw results for a given `graph_id` to CSV:
-
-```bash
-uv run python manage.py export volume-40k volume_raw.csv
-```
-
-### simplify to per-seg totals
-
-Aggregate voxel counts per segmentation ID from the exported CSV:
-
-```bash
-uv run python manage.py volume simplify \
-	--raw-file volume_raw.csv \
-	--output-file seg_voxel_counts.csv
-```
-
-This produces `seg_voxel_counts.csv` with columns:
-
-```
-seg_id,voxel_count
-```
-
-## generate a connectome
-
-```bash
-uv run python manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --output-file synapse-centroids-40k.csv --mask post
-
-uv run python manage.py synapses enqueue --graph-id connectome-40k --centroids-file synapse-centroids-40k.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ --enqueue-limit 10
-
-uv run python manage.py export connectome-40k synapses_40k.csv
-
-uv run python manage.py synapses simplify --raw-file synapses_40k.csv --output-file synapse_weights.csv
-```
+The following explanatory figure is published in [Connectome quality converges predictably to reveal optimal stopping points during proofreading](https://doi.org/10.64898/2026.06.30.735414):
+<figure>
+  <img src="./docs/methods.png">
+  <figcaption>
+		<strong>A)</strong> For a connectome task, an EM image in Neuroglancer helps the user identify individual synapses, with pink representing the presynapse and blue representing the postsynaptic density. To generate a full connectome, Cloudome creates one pre- and postsynaptic partner identification task per synapse and schedules them on parallelizable architecture, then saves results in a database. 
+		<br/><br/>
+		<strong>B)</strong> One connectome task identifies the cell IDs participating in one synapse. Two registered cuboids of segmentation and synapse paint are compared to determine synaptic partners. These two data layers are prerequisites for a Cloudome-computed connectome. 
+		<br/><br/>
+		<strong>C)</strong> A contactome task is one kind of volumetric task that Cloudome supports. To compute one contactome task, the contacting surface area of adjacent segmentation IDs is computed for one cuboid of segmentation. A one voxel overlap on three out of six chunk faces is added to account for edge effects (yellow). Duplicated edges in the overlap regions (pink) are accounted for only once.
+  </figcaption>
+</figure>
