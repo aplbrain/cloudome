@@ -1,6 +1,10 @@
-# cloudome
+# Running on AWS
 
-The AWS implementation uses SQS, Lambda (deployed with Zappa), and DynamoDB. 
+This implementation uses the AWS tools SQS, Lambda (deployed with Zappa), and DynamoDB. Jobs are queued to SQS and executed by many parallel Lambdas. Results are stored and queryable in DynamoDB.
+
+## Prerequisites
+
+An AWS account and the AWS CLI configured on your machine.
 
 ## Install and Configure
 
