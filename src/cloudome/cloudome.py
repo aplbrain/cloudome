@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import numpy as np
 from flask import Flask
-from database import (
+from .database import (
     SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
     SynapseEdgeResultsModel,

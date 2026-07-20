@@ -7,7 +7,7 @@ from tqdm import tqdm
 import numpy as np
 
 
-from database import SynapseEdgeTaskPayload
+from .database import SynapseEdgeTaskPayload
 
 
 def export_synapse_mask_centroids_to_file(

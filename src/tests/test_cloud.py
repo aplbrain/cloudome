@@ -2,9 +2,9 @@ from manage import (
     generate_cuboidwise_tasks_for_contactome_or_volume,
     enqueue_centroids_from_file,
     enqueue_centroids_from_file,
-    export_dynamodb_results_to_csv
+    export_dynamodb_results_to_csv,
 )
-from database import (
+from cloudome.database import (
     SynapseEdgeResultsModel,
     SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
