@@ -32,7 +32,7 @@ from shared_utils import (
 )
 from cloudome import return_ctc_edges, return_seg_edge, return_volume_counts, return_supervoxel_results
 
-QUEUE_LEASE_SECONDS = 60 * 5  # 5 minutes
+QUEUE_LEASE_SECONDS = 60 * 30  # 30 minutes
 _SQLITE_SHARDING_ENABLED = False
 _SQLITE_SHARD_SUFFIX: str | None = None
 _SQLITE_PATH_CACHE: dict[str, str] = {}
@@ -280,6 +280,9 @@ def _process_volume_task(task_payload: VolumeTaskPayload, sqlite_db_path: str):
 @queueable
 def _process_supervoxel_task(task_payload: SupervoxelTaskPayload, sqlite_db_path: str):
     """Process a supervoxel task and persist chunk metadata to SQLite."""
+
+    print(f"{datetime.datetime.now():%Y-%m-%d %H:%M:%S} - Starting task")
+    print(task_payload)
     sqlite_db_path = _resolve_sqlite_path(sqlite_db_path)
     results = return_supervoxel_results(task_payload)
     conn = sqlite3.connect(sqlite_db_path)
