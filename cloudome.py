@@ -331,7 +331,11 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
             cache=False,
             secrets="",
             mip=cast(Any, task["mip"]),
-            fill_missing=True,
+            fill_missing=False,
+        )
+    elif float(task["edge_sigma"]) > 0:
+        raise ValueError(
+            "raw_channel is required for membrane-aware supervoxelization when edge_sigma > 0."
         )
     # Use the dataset's chunk grid for aligned writes; task generation now matches this chunk size.
     bounds_min, bounds_max = _bbox_min_max(getattr(seg_cv, "bounds"))
@@ -400,6 +404,7 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         target_voxels_per_sv=task["target_voxels_per_sv"],
         min_voxels_per_sv=task["min_voxels_per_sv"],
         edge_sigma=task["edge_sigma"],
+        enable_force_dicing=False,
     )
 
     # Write supervoxels to output channel (write region only, no halo)

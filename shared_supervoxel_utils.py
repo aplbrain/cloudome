@@ -221,6 +221,7 @@ def split_mask_into_supervoxels(
     min_voxels: int = 2000,
     edge_cost: Optional[np.ndarray] = None,
     edge_weight: float = 0.7,
+    enable_force_dicing: bool = False,
 ) -> np.ndarray:
     """
     Split a single object's boolean mask into supervoxels.
@@ -278,50 +279,6 @@ def split_mask_into_supervoxels(
         coords = np.vstack((coords, seed_idx[None, :]))
         seeded_components.add(cc_id)
 
-    # Backfill seeds toward the requested count using farthest-point sampling.
-    # This avoids under-splitting smooth blobs where local maxima are sparse.
-    if coords.shape[0] < n_seeds:
-        max_dist = float(dist.max())
-        candidate_mask = mask
-        for ratio in (0.6, 0.4, 0.25, 0.1, 0.0):
-            maybe = mask & (dist >= (max_dist * ratio))
-            if int(maybe.sum()) >= n_seeds:
-                candidate_mask = maybe
-                break
-
-        candidates = np.argwhere(candidate_mask).astype(np.int32, copy=False)
-        if candidates.shape[0] == 0:
-            candidates = np.argwhere(mask).astype(np.int32, copy=False)
-        candidate_dist = dist[tuple(candidates.T)].astype(np.float32, copy=False)
-
-        available = np.ones(candidates.shape[0], dtype=bool)
-        nearest_seed_d2 = np.full(candidates.shape[0], np.inf, dtype=np.float32)
-
-        selected = {tuple(int(v) for v in row) for row in coords}
-        for i, row in enumerate(candidates):
-            if tuple(int(v) for v in row) in selected:
-                available[i] = False
-
-        for seed in coords:
-            delta = candidates - seed
-            d2 = np.sum(delta * delta, axis=1).astype(np.float32, copy=False)
-            nearest_seed_d2 = np.minimum(nearest_seed_d2, d2)
-
-        while coords.shape[0] < n_seeds and np.any(available):
-            # Favor spatial coverage first, then interior points.
-            score = nearest_seed_d2 + (candidate_dist * candidate_dist)
-            score[~available] = -np.inf
-            next_idx = int(np.argmax(score))
-            if not np.isfinite(score[next_idx]):
-                break
-            next_seed = candidates[next_idx]
-            coords = np.vstack((coords, next_seed[None, :]))
-            available[next_idx] = False
-
-            delta = candidates - next_seed
-            d2 = np.sum(delta * delta, axis=1).astype(np.float32, copy=False)
-            nearest_seed_d2 = np.minimum(nearest_seed_d2, d2)
-
     markers = np.zeros_like(mask, dtype=np.int32)
     for i, coord in enumerate(coords, start=1):
         markers[tuple(int(v) for v in coord)] = i
@@ -352,8 +309,9 @@ def split_mask_into_supervoxels(
 
     # Merge tiny supervoxels
     labels = merge_small_regions(labels, min_voxels=min_voxels)
-    # Enforce an upper size bound by dicing large regions into tiles.
-    labels = dice_large_regions(labels, max_voxels=target_voxels_per_sv)
+    if enable_force_dicing:
+        # Optional hard dicing mode for aggressive over-segmentation.
+        labels = dice_large_regions(labels, max_voxels=target_voxels_per_sv)
 
     # Compact to 1..K
     labels, _, _ = relabel_sequential(labels)
@@ -368,6 +326,7 @@ def process_chunk(
     target_voxels_per_sv: int = 25000,
     min_voxels_per_sv: int = 2000,
     edge_sigma: float = 1.5,
+    enable_force_dicing: bool = False,
 ) -> Tuple[np.ndarray, dict[str, Any]]:
     """
     seg_chunk: XYZ uint64 labels (0 = background) for THIS chunk only (no halo), shape (X, Y, Z).
@@ -407,6 +366,7 @@ def process_chunk(
             min_voxels=min_voxels_per_sv,
             edge_cost=edge_cost,
             edge_weight=0.7 if edge_cost is not None else 0.0,
+            enable_force_dicing=enable_force_dicing,
         )
 
         ncomp = int(comp.max())
@@ -449,6 +409,7 @@ def supervoxelize_array(
     edge_sigma: float = 1.5,
     n_chunks_xyz: Optional[Tuple[int, int, int]] = None,
     min_local_bits: int = 20,
+    enable_force_dicing: bool = False,
 ) -> Tuple[np.ndarray, list[dict[str, Any]]]:
     """
     seg: XYZ uint64 input segmentation (0=background), shape (X, Y, Z).
@@ -492,6 +453,7 @@ def supervoxelize_array(
             target_voxels_per_sv=target_voxels_per_sv,
             min_voxels_per_sv=min_voxels_per_sv,
             edge_sigma=edge_sigma,
+            enable_force_dicing=enable_force_dicing,
         )
 
         out[wslc] = out_chunk
