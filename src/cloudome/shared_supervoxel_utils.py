@@ -15,7 +15,7 @@ from skimage.feature import peak_local_max
 from cloudvolume import CloudVolume
 from tqdm import tqdm
 
-from database import SupervoxelTaskPayload
+from .database import SupervoxelTaskPayload
 
 SegmentID = int
 ContactPair = tuple[SegmentID, SegmentID]
@@ -96,7 +96,7 @@ def iter_chunk_bounds(
     """
     X, Y, Z = shape_xyz
     cx, cy, cz = chunk_xyz
-    
+
     for cx_i, x0 in enumerate(range(0, X, cx)):
         for cy_i, y0 in enumerate(range(0, Y, cy)):
             for cz_i, z0 in enumerate(range(0, Z, cz)):
@@ -264,7 +264,9 @@ def split_mask_into_supervoxels(
 
     # Ensure every disconnected piece has at least one seed
     # Use bounding slices so we only inspect each connected component locally
-    cc_labels, n_cc = ndi.label(mask, structure=ndi.generate_binary_structure(mask.ndim, 1))
+    cc_labels, n_cc = ndi.label(
+        mask, structure=ndi.generate_binary_structure(mask.ndim, 1)
+    )
     cc_slices = ndi.find_objects(cc_labels)
 
     seed_list = [coords[i] for i in range(coords.shape[0])]
@@ -287,15 +289,20 @@ def split_mask_into_supervoxels(
         dist_sub = dist[sl]
         # Pick the voxel with the largest distance inside this component.
         local_best = int(np.argmax(np.where(cc_sub, dist_sub, -np.inf)))
-        local_idx = np.asarray(np.unravel_index(local_best, dist_sub.shape), dtype=np.int32)
+        local_idx = np.asarray(
+            np.unravel_index(local_best, dist_sub.shape), dtype=np.int32
+        )
         global_idx = local_idx + np.array([s.start for s in sl], dtype=np.int32)
 
         seed_list.append(global_idx)
         seeded_components.add(cc_id)
 
     markers = np.zeros_like(mask, dtype=np.int32)
-    if coords.shape[0] > 0:
-        markers[tuple(coords.T)] = np.arange(1, coords.shape[0] + 1, dtype=np.int32)
+    if seed_list:
+        seed_coords = np.unique(np.vstack(seed_list).astype(np.int32), axis=0)
+        markers[tuple(seed_coords.T)] = np.arange(
+            1, seed_coords.shape[0] + 1, dtype=np.int32
+        )
 
     # Build cost image
     if edge_cost is None:
@@ -391,7 +398,9 @@ def process_chunk(
         for k in range(1, ncomp + 1):
             local_counter += 1
             if local_counter > id_packer.max_local:
-                raise RuntimeError(...)
+                raise RuntimeError(
+                    f"Chunk {chunk_index_xyz} exceeded {id_packer.bl} local-id bits."
+                )
             gids[k] = id_packer.encode(cx, cy, cz, local_counter)
 
         # Assign all voxels for this label at once
@@ -496,12 +505,12 @@ def generate_supervoxel_tasks(
 ) -> Iterator[SupervoxelTaskPayload]:
     """
     Generate supervoxel tasks for chunks in a segmentation volume.
-    
+
     Args:
         bbox_min_xyz: Optional (x_min, y_min, z_min) to constrain chunk generation.
         bbox_max_xyz: Optional (x_max, y_max, z_max) to constrain chunk generation.
         z_start, z_end: Deprecated; use bbox_min_xyz/bbox_max_xyz instead.
-    
+
     Yields SupervoxelTaskPayload for each chunk.
     """
     seg_data = CloudVolume(
@@ -530,7 +539,7 @@ def generate_supervoxel_tasks(
         x_start = max(x_start, bbox_min_xyz[0])
         y_start = max(y_start, bbox_min_xyz[1])
         z_start_voxel = max(z_start_voxel, bbox_min_xyz[2] - voxel_offset[2])
-    
+
     if bbox_max_xyz is not None:
         x_stop = min(x_stop, bbox_max_xyz[0])
         y_stop = min(y_stop, bbox_max_xyz[1])
@@ -539,7 +548,7 @@ def generate_supervoxel_tasks(
     # Fallback to z_start/z_end if bbox not provided
     if bbox_min_xyz is None and z_start is not None:
         z_start_voxel = max(0, min(volume_shape_xyz[2], z_start))
-    
+
     if bbox_max_xyz is None and z_end is not None:
         z_end_voxel = max(z_start_voxel, min(volume_shape_xyz[2], z_end))
 

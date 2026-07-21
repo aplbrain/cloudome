@@ -1,7 +1,7 @@
 from cloudvolume import CloudVolume
 from intern.utils.parallel import block_compute
 
-from database import ContactomeEdgeTaskPayload, TaskType, VolumeTaskPayload
+from .database import ContactomeEdgeTaskPayload, TaskType, VolumeTaskPayload
 
 
 def generate_cuboidwise_tasks(

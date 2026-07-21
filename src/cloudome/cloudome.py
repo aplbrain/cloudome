@@ -4,7 +4,7 @@ from typing import Any, cast
 
 import numpy as np
 from flask import Flask
-from database import (
+from .database import (
     SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
     SynapseEdgeResultsModel,
@@ -19,7 +19,7 @@ import math
 from collections import Counter
 
 from cloudvolume import CloudVolume
-from shared_supervoxel_utils import (
+from .shared_supervoxel_utils import (
     process_chunk,
     GlobalIDPacker,
 )
@@ -413,9 +413,9 @@ def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
         cache=False,
         mip=cast(Any, task["mip"]),
     )
-    
+
     output_cv[ax:ax + arx, ay:ay + ary, az:az + arz] = sv_chunk
-    
+
     # Aggregate metadata (chunk index is already provided in the task)
     return {
         "num_sv": metadata["num_sv"],

@@ -19,6 +19,16 @@ def _parse_mip_argument(mip_arg: str) -> list | int:
             exit(1)
 
 
+def _parse_xyz_argument(xyz_arg: str | None) -> tuple[int, int, int] | None:
+    if xyz_arg is None:
+        return None
+
+    parts = xyz_arg.split(",")
+    if len(parts) != 3:
+        raise ValueError("Expected XYZ argument to contain exactly three values.")
+    return (int(parts[0]), int(parts[1]), int(parts[2]))
+
+
 def _attach_global_arguments(
     parser: argparse.ArgumentParser,
     queue_url_default: str = "https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs",
@@ -273,6 +283,7 @@ def _attach_supervoxel_parser(subparsers: argparse._SubParsersAction):
 
 __all__ = [
     "_parse_mip_argument",
+    "_parse_xyz_argument",
     "_attach_global_arguments",
     "_attach_contactome_parser",
     "_attach_synapse_parser",

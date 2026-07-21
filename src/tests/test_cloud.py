@@ -2,9 +2,9 @@ from manage import (
     generate_cuboidwise_tasks_for_contactome_or_volume,
     enqueue_centroids_from_file,
     generate_supervoxel_tasks_for_queue,
-    export_dynamodb_results_to_csv
+    export_dynamodb_results_to_csv,
 )
-from database import (
+from cloudome.database import (
     SynapseEdgeResultsModel,
     SynapseEdgeTaskPayload,
     ContactomeEdgeTaskPayload,
@@ -36,7 +36,7 @@ def test_enqueue_contactome_tasks(graph_id=None):
     if not graph_id:
         now = int(time.time())
         graph_id = f"test-contactome-{now}"
-        
+
     print(f"Initiating test {graph_id}")
     generate_cuboidwise_tasks_for_contactome_or_volume(
         sqs_url=queue_url,
@@ -50,12 +50,12 @@ def test_enqueue_contactome_tasks(graph_id=None):
         enqueue_limit=100,
     )
     return graph_id
-    
+
 def test_enqueue_volume_tasks(graph_id=None):
     if not graph_id:
         now = int(time.time())
         graph_id = f"test-volume-{now}"
-        
+
     print(f"Initiating test {graph_id}")
     generate_cuboidwise_tasks_for_contactome_or_volume(
         sqs_url=queue_url,
@@ -142,14 +142,14 @@ def test_results(graph_id, correct_len):
         print(f"Test {graph_id} failed")
     else:
         print(f"Test {graph_id} successful")
-    
+
 
 if __name__ == "__main__":
-    
+
     contactome_graph_id = test_enqueue_contactome_tasks()
     time.sleep(2)
     test_results(contactome_graph_id, correct_num_lines_for_contactome_task)
-    
+
     volume_graph_id = test_enqueue_volume_tasks()
     time.sleep(2)
     test_results(volume_graph_id, correct_num_lines_for_volume_task)
