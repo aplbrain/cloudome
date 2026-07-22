@@ -32,3 +32,13 @@ The following explanatory figure is published in [Connectome quality converges p
 		<strong>C)</strong> A contactome task is one kind of volumetric task that Cloudome supports. To compute one contactome task, the contacting surface area of adjacent segmentation IDs is computed for one cuboid of segmentation. A one voxel overlap on three out of six chunk faces is added to account for edge effects (yellow). Duplicated edges in the overlap regions (pink) are accounted for only once.
   </figcaption>
 </figure>
+
+## Attribution
+
+For questions or collaboration inquiries, please email hannah.martinez@jhuapl.edu or jordan.matelsky@jhuapl.edu.
+
+This software was created by the Johns Hopkins University Applied Physics Laboratory, with funding supported by the NIH BRAIN Initiative under grant no. R24MH114785.
+
+The views, opinions, and/or findings expressed are those of the author(s) and should not be interpreted as representing the official views or policies of the NIH.
+
+© 2026 The Johns Hopkins University Applied Physics Laboratory LLC

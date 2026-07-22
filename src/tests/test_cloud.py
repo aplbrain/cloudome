@@ -1,3 +1,21 @@
+# Copyright © 2026 The Johns Hopkins University Applied Physics Laboratory LLC
+
+# Permission is hereby granted, free of charge, to any person obtaining a copy
+# of this software and associated documentation files (the "Software"), to
+# deal in the Software without restriction, including without limitation the
+# rights to use, copy, modify, merge, publish, distribute, sublicense, and/or
+# sell copies of the Software, and to permit persons to whom the Software is
+# furnished to do so, subject to the following conditions:
+# The above copyright notice and this permission notice shall be included in
+# all copies or substantial portions of the Software.
+
+# THE SOFTWARE IS PROVIDED "AS IS", WITHOUT WARRANTY OF ANY KIND, EXPRESS OR
+# IMPLIED, INCLUDING BUT NOT LIMITED TO THE WARRANTIES OF MERCHANTABILITY,
+# FITNESS FOR A PARTICULAR PURPOSE AND NONINFRINGEMENT. IN NO EVENT SHALL THE
+# AUTHORS OR COPYRIGHT HOLDERS BE LIABLE FOR ANY CLAIM, DAMAGES OR OTHER LIABILITY,
+# WHETHER IN AN ACTION OF CONTRACT, TORT OR OTHERWISE, ARISING FROM, OUT OF OR
+# IN CONNECTION WITH THE SOFTWARE OR THE USE OR OTHER DEALINGS IN THE SOFTWARE.
+
 from manage import (
     generate_cuboidwise_tasks_for_contactome_or_volume,
     enqueue_centroids_from_file,
@@ -16,18 +34,17 @@ from cloudome.database import (
 import time
 import boto3
 
-# If you change these params, you must also change lines 25+26
 block_size = (64, 64, 32)
 queue_url = "https://sqs.us-east-1.amazonaws.com/<your-sqs-queue-id>/<your-sqs-queue-name>"
 segmentation_channel = "s3://path/to/segmentation/"
 synapse_channel = "s3://path/to/synapses/"
 raw_channel = "s3://path/to/images/"
 output_channel = "s3://path/to/supervoxel/output/"
-centroids_file = "test/synapse-centroids.csv"
+centroids_file = "path/to/synapse-centroids.csv"
 mip = [36, 36, 42]
 z_start = 1800
 z_end = 1810
-
+# The below will change depending on above input variables
 correct_num_lines_for_contactome_task = 445
 correct_num_lines_for_volume_task = 432
 correct_num_lines_for_connectome_task = 100
