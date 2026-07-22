@@ -71,7 +71,7 @@ Enqueue cuboid-wise volume tasks over your segmentation channel. Adjust block si
 ```bash
 uv run python manage.py volume generate \
 	--graph-id volume-40k \
-	--segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ \
+	--segmentation-channel s3://path/to/segmentation/ \
 	--block-size-x 64 --block-size-y 64 --block-size-z 32 \
 	--z-start 0 --z-end 1000 \
 	--enqueue-limit 10  # optional for a quick smoke test
@@ -121,9 +121,9 @@ seg_id,voxel_count
 ## generate a connectome
 
 ```bash
-uv run python manage.py synapses generate --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --output-file synapse-centroids-40k.csv --mask post
+uv run python manage.py synapses generate --synapse-channel s3://path/to/synapses/ --output-file synapse-centroids-40k.csv --mask post
 
-uv run python manage.py synapses enqueue --graph-id connectome-40k --centroids-file synapse-centroids-40k.csv --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/ --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/ --enqueue-limit 10
+uv run python manage.py synapses enqueue --graph-id connectome-40k --centroids-file synapse-centroids-40k.csv --synapse-channel s3://path/to/synapses/ --segmentation-channel s3://path/to/segmentation/ --enqueue-limit 10
 
 uv run python manage.py export connectome-40k synapses_40k.csv
 

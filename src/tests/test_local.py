@@ -24,11 +24,11 @@ import sqlite3
 block_size = (64, 64, 32)
 queue_url = "fq://q-CloudomeTasks"
 sqlite_db_path = "cloudome-results.db"
-segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/"
-supervoxel_segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_50000/"
-synapse_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/"
-raw_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/em"
-output_sv_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/supervoxels_agg_chkpt_50000/"
+segmentation_channel = "s3://path/to/segmentation/"
+supervoxel_segmentation_channel = "s3://path/to/supervoxels/"
+synapse_channel = "s3://path/to/synapses/"
+raw_channel = "s3://path/to/images"
+output_sv_channel = "s3://path/to/output/"
 centroids_file = "test/synapse-centroids.csv"
 mip = [36, 36, 42]
 z_start = 1800

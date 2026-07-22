@@ -18,11 +18,11 @@ import boto3
 
 # If you change these params, you must also change lines 25+26
 block_size = (64, 64, 32)
-queue_url = "https://sqs.us-east-1.amazonaws.com/407510763690/CloudomeJobs"
-segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/"
-synapse_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/"
-raw_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/image/"
-output_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/supervoxels/"
+queue_url = "https://sqs.us-east-1.amazonaws.com/<your-sqs-queue-id>/<your-sqs-queue-name>"
+segmentation_channel = "s3://path/to/segmentation/"
+synapse_channel = "s3://path/to/synapses/"
+raw_channel = "s3://path/to/images/"
+output_channel = "s3://path/to/supervoxel/output/"
 centroids_file = "test/synapse-centroids.csv"
 mip = [36, 36, 42]
 z_start = 1800

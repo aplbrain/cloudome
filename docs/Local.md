@@ -38,7 +38,7 @@ uv run local_manage.py \
   --mip 72,72,168 \
   volume generate \
   --graph-id zebrafish-nuclei-volume \
-  --segmentation-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/nuclei/ \
+  --segmentation-channel s3://path/to/segmentation/ \
   --block-size-x 512 --block-size-y 512 --block-size-z 128 
 ```
 
@@ -49,7 +49,7 @@ Generate synapse centroids file:
 ```bash
 uv run local_manage.py \
   synapses generate \
-  --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses \
+  --synapse-channel s3://path/to/synapses \
   --output-file synapse-centroids-test0.csv
 ```
 
@@ -61,8 +61,8 @@ uv run local_manage.py \
   synapses enqueue \
   --graph-id connectome-test0 \
   --centroids-file synapse-centroids-test0.csv \
-  --synapse-channel s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses \
-  --segmentation-channel s3://cvdb-bossdb-boss/martinez2025/zebrafish/shuffle_1_checkpoint_5000
+  --synapse-channel s3://path/to/synapses \
+  --segmentation-channel s3://path/to/segmentation
 ```
 
 ### Sharding SQLite DB

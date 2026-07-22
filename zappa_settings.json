@@ -22,7 +22,7 @@
             {
                 "function": "cloudome.process_queue_job",
                 "event_source": {
-                    "arn": "arn:aws:sqs:us-east-1:407510763690:CloudomeJobs",
+                    "arn": "<your-sqs-ARN-here>",
                     "batch_size": 10,
                     "enabled": true
                 }
