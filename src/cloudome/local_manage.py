@@ -1,6 +1,7 @@
 import argparse
 import datetime
 from functools import partial
+import json
 import os
 import socket
 import sqlite3
@@ -14,8 +15,10 @@ from .database import (
     SynapseEdgeTaskPayload,
     TaskType,
     VolumeTaskPayload,
+    SupervoxelTaskPayload,
 )
 from .shared_cuboid_utils import generate_cuboidwise_tasks
+from .shared_supervoxel_utils import generate_supervoxel_tasks
 from .shared_synapse_utils import (
     generate_centroidwise_tasks,
     export_synapse_mask_centroids_to_file,
@@ -24,10 +27,17 @@ from .shared_utils import (
     _attach_contactome_parser,
     _attach_global_arguments,
     _attach_synapse_parser,
+    _attach_supervoxel_parser,
     _attach_volume_parser,
     _parse_mip_argument,
+    _parse_xyz_argument,
 )
-from .cloudome import return_ctc_edges, return_seg_edge, return_volume_counts
+from .cloudome import (
+    return_ctc_edges,
+    return_seg_edge,
+    return_supervoxel_results,
+    return_volume_counts,
+)
 
 QUEUE_LEASE_SECONDS = 60 * 5  # 5 minutes
 _SQLITE_SHARDING_ENABLED = False
@@ -171,6 +181,29 @@ def provision_db_volume(sqlite_db_path: str):
     conn.close()
 
 
+def provision_db_supervoxel(sqlite_db_path: str):
+    """Provision the local SQLite database for supervoxel chunk metadata."""
+    conn = sqlite3.connect(_resolve_sqlite_path(sqlite_db_path))
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supervoxel_chunks (
+            graph_id TEXT,
+            chunk_index TEXT,
+            chunk_x INTEGER,
+            chunk_y INTEGER,
+            chunk_z INTEGER,
+            num_sv INTEGER,
+            parent_sv_ids TEXT,
+            sv_sizes_json TEXT,
+            PRIMARY KEY (graph_id, chunk_index)
+        )
+        """
+    )
+    conn.commit()
+    conn.close()
+
+
 def enqueue_cuboidwise_tasks_for_contactome_or_volume(
     fq_url: str,
     graph_id: str,
@@ -251,6 +284,114 @@ def _process_volume_task(task_payload: VolumeTaskPayload, sqlite_db_path: str):
     conn.close()
 
 
+@queueable
+def _process_supervoxel_task(task_payload: SupervoxelTaskPayload, sqlite_db_path: str):
+    """Process a supervoxel task and persist chunk metadata to SQLite."""
+    sqlite_db_path = _resolve_sqlite_path(sqlite_db_path)
+    results = return_supervoxel_results(task_payload)
+    conn = sqlite3.connect(sqlite_db_path)
+    cursor = conn.cursor()
+    cursor.execute(
+        """
+        CREATE TABLE IF NOT EXISTS supervoxel_chunks (
+            graph_id TEXT,
+            chunk_index TEXT,
+            chunk_x INTEGER,
+            chunk_y INTEGER,
+            chunk_z INTEGER,
+            num_sv INTEGER,
+            parent_sv_ids TEXT,
+            sv_sizes_json TEXT,
+            PRIMARY KEY (graph_id, chunk_index)
+        )
+        """
+    )
+    cx, cy, cz = task_payload["chunk_index_xyz"]
+    chunk_index_str = f"x{cx}_y{cy}_z{cz}"
+
+    if results:
+        parent_sv_ids_json = json.dumps(results.get("parent_sv_ids", {}))
+        sv_sizes_json = json.dumps(results.get("sv_sizes", []))
+        cursor.execute(
+            """
+            INSERT INTO supervoxel_chunks (
+                graph_id,
+                chunk_index,
+                chunk_x,
+                chunk_y,
+                chunk_z,
+                num_sv,
+                parent_sv_ids,
+                sv_sizes_json
+            )
+            VALUES (?, ?, ?, ?, ?, ?, ?, ?)
+            """,
+            (
+                task_payload["graph_id"],
+                chunk_index_str,
+                cx,
+                cy,
+                cz,
+                results["num_sv"],
+                parent_sv_ids_json,
+                sv_sizes_json,
+            ),
+        )
+    conn.commit()
+    conn.close()
+
+
+def enqueue_supervoxel_tasks(
+    fq_url: str,
+    graph_id: str,
+    segmentation_channel: str,
+    output_channel: str,
+    raw_channel: str | None,
+    mip: list | int,
+    sqlite_db_path: str,
+    target_voxels_per_sv: int = 25000,
+    min_voxels_per_sv: int = 2000,
+    halo: int = 8,
+    edge_sigma: float = 1.5,
+    chunk_xyz: tuple[int, int, int] = (128, 128, 128),
+    z_start: int | None = None,
+    z_end: int | None = None,
+    bbox_min_xyz: tuple[int, int, int] | None = None,
+    bbox_max_xyz: tuple[int, int, int] | None = None,
+    enqueue_limit: int | None = None,
+):
+    """
+    Enqueue supervoxel chunk processing tasks.
+    """
+    tq = TaskQueue(fq_url)
+    for task in tqdm(
+        generate_supervoxel_tasks(
+            graph_id=graph_id,
+            segmentation_channel=segmentation_channel,
+            output_channel=output_channel,
+            raw_channel=raw_channel,
+            mip=mip,
+            target_voxels_per_sv=target_voxels_per_sv,
+            min_voxels_per_sv=min_voxels_per_sv,
+            halo=halo,
+            edge_sigma=edge_sigma,
+            chunk_xyz=chunk_xyz,
+            z_start=z_start,
+            z_end=z_end,
+            bbox_min_xyz=bbox_min_xyz,
+            bbox_max_xyz=bbox_max_xyz,
+            enqueue_limit=enqueue_limit,
+        )
+    ):
+        tq.insert(
+            partial(
+                _process_supervoxel_task,
+                task_payload=task,
+                sqlite_db_path=sqlite_db_path,
+            )
+        )
+
+
 def enqueue_centroids_from_file(
     fq_url: str,
     graph_id: str,
@@ -319,6 +460,7 @@ def parse_arguments():
     _attach_contactome_parser(subparsers)
     _attach_synapse_parser(subparsers)
     _attach_volume_parser(subparsers)
+    _attach_supervoxel_parser(subparsers)
 
     worker_parser = subparsers.add_parser("worker", help="Run a task worker")
     worker_parser.add_argument(
@@ -429,6 +571,30 @@ def main():
                 block_size=block_size,
                 z_start=args.z_start,
                 z_end=args.z_end,
+                enqueue_limit=args.enqueue_limit,
+            )
+
+    elif args.namespace == "supervoxel":
+        if args.command == "generate":
+            chunk_xyz = (args.chunk_size_x, args.chunk_size_y, args.chunk_size_z)
+            provision_db_supervoxel(args.sqlite_db_path)
+            enqueue_supervoxel_tasks(
+                fq_url=args.queue_url,
+                graph_id=args.graph_id,
+                segmentation_channel=args.segmentation_channel,
+                output_channel=args.output_channel,
+                raw_channel=args.raw_channel,
+                sqlite_db_path=args.sqlite_db_path,
+                mip=mip,
+                target_voxels_per_sv=args.target_voxels_per_sv,
+                min_voxels_per_sv=args.min_voxels_per_sv,
+                halo=args.halo,
+                edge_sigma=args.edge_sigma,
+                chunk_xyz=chunk_xyz,
+                z_start=args.z_start,
+                z_end=args.z_end,
+                bbox_min_xyz=_parse_xyz_argument(args.bbox_min_xyz),
+                bbox_max_xyz=_parse_xyz_argument(args.bbox_max_xyz),
                 enqueue_limit=args.enqueue_limit,
             )
 

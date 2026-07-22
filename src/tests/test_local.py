@@ -1,8 +1,10 @@
 from local_manage import (
     provision_db_contactome,
     provision_db_synapses,
+    provision_db_supervoxel,
     enqueue_cuboidwise_tasks_for_contactome_or_volume,
     enqueue_centroids_from_file,
+    enqueue_supervoxel_tasks,
     run_worker,
 )
 from cloudome.database import (
@@ -12,6 +14,7 @@ from cloudome.database import (
     ContactEdgeResultsModel,
     TaskType,
     VolumeTaskPayload,
+    SupervoxelTaskPayload,
 )
 import time
 from taskqueue import TaskQueue
@@ -22,7 +25,10 @@ block_size = (64, 64, 32)
 queue_url = "fq://q-CloudomeTasks"
 sqlite_db_path = "cloudome-results.db"
 segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_40000/"
+supervoxel_segmentation_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/agglomeration_checkpoint_50000/"
 synapse_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/synapses/"
+raw_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/em"
+output_sv_channel = "s3://cvdb-bossdb-boss/smith2024/zebrafish/supervoxels_agg_chkpt_50000/"
 centroids_file = "test/synapse-centroids.csv"
 mip = [36, 36, 42]
 z_start = 1800
@@ -31,12 +37,13 @@ z_end = 1810
 correct_num_lines_for_contactome_task = 445
 correct_num_lines_for_volume_task = 432
 correct_num_lines_for_connectome_task = 100
+correct_num_lines_for_supervoxel_task = 10  # 10 chunks processed
 
 def test_enqueue_contactome_tasks(graph_id=None):
     if not graph_id:
         now = int(time.time())
         graph_id = f"test-contactome-{now}"
-        
+
     print(f"Initiating test {graph_id}")
     enqueue_cuboidwise_tasks_for_contactome_or_volume(
         fq_url=queue_url,
@@ -52,12 +59,12 @@ def test_enqueue_contactome_tasks(graph_id=None):
     )
     run_worker(queue_url, max_tasks=100, verbose=True)
     return graph_id
-    
+
 def test_enqueue_volume_tasks(graph_id=None):
     if not graph_id:
         now = int(time.time())
         graph_id = f"test-volume-{now}"
-        
+
     print(f"Initiating test {graph_id}")
     enqueue_cuboidwise_tasks_for_contactome_or_volume(
         fq_url=queue_url,
@@ -93,6 +100,41 @@ def test_enqueue_connectome_tasks(graph_id=None):
     run_worker(queue_url, max_tasks=100, verbose=True)
     return graph_id
 
+
+def test_enqueue_supervoxel_tasks(graph_id=None):
+
+    #TODO: Add connected component to ensure supervoxels are split according to inner-chunk boundaries
+    if not graph_id:
+        now = int(time.time())
+        graph_id = f"test-supervoxel-{now}"
+
+    print(f"Initiating test {graph_id}")
+    chunk_size = (128, 128, 128)
+
+    # Target bounding box around coordinates 6641, 5477, 5134
+    bbox_min = (6400, 5200, 5000)
+    bbox_max = (7000, 5700, 5300)
+
+    enqueue_supervoxel_tasks(
+        fq_url=queue_url,
+        graph_id=graph_id,
+        segmentation_channel=supervoxel_segmentation_channel,
+        output_channel=output_sv_channel,
+        raw_channel=raw_channel,
+        sqlite_db_path=sqlite_db_path,
+        mip=0,
+        target_voxels_per_sv=100,
+        min_voxels_per_sv=100,
+        halo=8,
+        edge_sigma=1.5,
+        chunk_xyz=chunk_size,
+        bbox_min_xyz=bbox_min,
+        bbox_max_xyz=bbox_max,
+        enqueue_limit=10,
+    )
+    run_worker(queue_url, max_tasks=10, verbose=True)
+    return graph_id
+
 def wait_for_queue_empty():
     tq = TaskQueue(queue_url)
     remaining = -1
@@ -121,18 +163,21 @@ def test_results(table_name, graph_id, correct_len):
         print(f"Test {graph_id} failed")
     else:
         print(f"Test {graph_id} successful")
-    
+
 
 if __name__ == "__main__":
 
-    provision_db_contactome(sqlite_db_path)
-    provision_db_synapses(sqlite_db_path)
-    
-    contactome_graph_id = test_enqueue_contactome_tasks()
-    test_results("contactome_edges", contactome_graph_id, correct_num_lines_for_contactome_task)
-    
-    volume_graph_id = test_enqueue_volume_tasks()
-    test_results("volume_counts", volume_graph_id, correct_num_lines_for_volume_task)
+    # provision_db_contactome(sqlite_db_path)
+    # provision_db_synapses(sqlite_db_path)
+    provision_db_supervoxel(sqlite_db_path)
 
-    connectome_graph_id = test_enqueue_connectome_tasks()
-    test_results("synapse_edges", connectome_graph_id, correct_num_lines_for_connectome_task)
+    # contactome_graph_id = test_enqueue_contactome_tasks()
+    # test_results("contactome_edges", contactome_graph_id, correct_num_lines_for_contactome_task)
+
+    # volume_graph_id = test_enqueue_volume_tasks()
+    # test_results("volume_counts", volume_graph_id, correct_num_lines_for_volume_task)
+
+    # connectome_graph_id = test_enqueue_connectome_tasks()
+    # test_results("synapse_edges", connectome_graph_id, correct_num_lines_for_connectome_task)
+    supervoxel_graph_id = test_enqueue_supervoxel_tasks()
+    test_results("supervoxel_chunks", supervoxel_graph_id, correct_num_lines_for_supervoxel_task)

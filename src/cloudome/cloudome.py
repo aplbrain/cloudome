@@ -11,12 +11,18 @@ from .database import (
     ContactEdgeResultsModel,
     VolumeCountResultsModel,
     VolumeTaskPayload,
+    SupervoxelTaskPayload,
+    SupervoxelResultsModel,
 )
 import cc3d
 import math
 from collections import Counter
 
 from cloudvolume import CloudVolume
+from .shared_supervoxel_utils import (
+    process_chunk,
+    GlobalIDPacker,
+)
 
 os.environ["CLOUD_VOLUME_DIR"] = "/tmp/cloudvolume"
 os.makedirs("/tmp/cloudvolume", exist_ok=True)
@@ -67,16 +73,14 @@ def return_seg_edge(task: SynapseEdgeTaskPayload) -> tuple[SegmentID, SegmentID]
             task["synapse_channel"],
             use_https=True,
             cache=False,
-            secrets="",
-            mip=cast(Any, task["mip"]),
+            mip=cast(int, task["mip"]),
             fill_missing=True,
         )
         segmentation_volume = CloudVolume(
             task["segmentation_channel"],
             use_https=True,
             cache=False,
-            secrets="",
-            mip=cast(Any, task["mip"]),
+            mip=cast(int, task["mip"]),
             fill_missing=True,
         )
 
@@ -304,12 +308,152 @@ def return_volume_counts(task: VolumeTaskPayload):
         return {}
 
 
+def return_supervoxel_results(task: SupervoxelTaskPayload) -> dict[str, Any]:
+    """
+    Process a supervoxel chunk task.
+    Reads input segmentation + raw channel, processes the single chunk,
+    writes output supervoxels to output_channel, and returns metadata.
+    """
+    # Load input segmentation with halo
+    seg_cv = CloudVolume(
+        task["segmentation_channel"],
+        use_https=True,
+        cache=False,
+        secrets="",
+        mip=cast(Any, task["mip"]),
+        fill_missing=True,
+    )
+    raw_cv = None
+    if task["raw_channel"]:
+        raw_cv = CloudVolume(
+            task["raw_channel"],
+            use_https=True,
+            cache=False,
+            secrets="",
+            mip=cast(Any, task["mip"]),
+            fill_missing=False,
+        )
+    elif float(task["edge_sigma"]) > 0:
+        raise ValueError(
+            "raw_channel is required for membrane-aware supervoxelization when edge_sigma > 0."
+        )
+    # Use the dataset's chunk grid for aligned writes; task generation now matches this chunk size.
+    bounds_min, bounds_max = _bbox_min_max(getattr(seg_cv, "bounds"))
+    voxel_offset = _vec3_from_any(getattr(seg_cv, "voxel_offset"))
+    chunk_size = _vec3_from_any(getattr(seg_cv, "chunk_size"))
+
+    def _align_to_chunk(start: int, offset: int, chunk: int) -> int:
+        return offset + ((start - offset) // chunk) * chunk
+
+    x_start, y_start, z_start = task["cuboid_start"]
+    halo = int(task["halo"])
+
+    # Align to chunk grid (task chunk size is enforced to match dataset chunk size)
+    ax = int(_align_to_chunk(int(x_start), voxel_offset[0], chunk_size[0]))
+    ay = int(_align_to_chunk(int(y_start), voxel_offset[1], chunk_size[1]))
+    az = int(_align_to_chunk(int(z_start), voxel_offset[2], chunk_size[2]))
+
+    arx = int(task["cuboid_radius"][0])
+    ary = int(task["cuboid_radius"][1])
+    arz = int(task["cuboid_radius"][2])
+
+    # Compute read bounds including halo, clamp to dataset bounds
+    x_read_start = max(bounds_min[0], ax - halo)
+    y_read_start = max(bounds_min[1], ay - halo)
+    z_read_start = max(bounds_min[2], az - halo)
+    x_read_stop = min(bounds_max[0], ax + arx + halo)
+    y_read_stop = min(bounds_max[1], ay + ary + halo)
+    z_read_stop = min(bounds_max[2], az + arz + halo)
+
+    seg_data = np.squeeze(
+        np.asarray(seg_cv[x_read_start:x_read_stop, y_read_start:y_read_stop, z_read_start:z_read_stop])
+    )
+    raw_data = None
+    if raw_cv is not None:
+        raw_data = np.squeeze(
+            np.asarray(
+                raw_cv[
+                    x_read_start:x_read_stop,
+                    y_read_start:y_read_stop,
+                    z_read_start:z_read_stop,
+                ]
+            )
+        )
+
+    # Arrays are now in XYZ order (shape is X, Y, Z)
+    # Prepare write-region chunks using true local offsets. This avoids dropping
+    # voxels when halo reads are clipped at dataset boundaries.
+    write_slice_x = slice(ax - x_read_start, ax - x_read_start + arx)
+    write_slice_y = slice(ay - y_read_start, ay - y_read_start + ary)
+    write_slice_z = slice(az - z_read_start, az - z_read_start + arz)
+
+    seg_chunk = seg_data[write_slice_x, write_slice_y, write_slice_z]
+    raw_chunk = (
+        raw_data[write_slice_x, write_slice_y, write_slice_z]
+        if raw_data is not None
+        else None
+    )
+
+    id_packer = GlobalIDPacker(task["n_chunks_xyz"], min_local_bits=task["min_local_bits"])
+
+    sv_chunk, metadata = process_chunk(
+        seg_chunk,
+        raw_chunk,
+        task["chunk_index_xyz"],
+        id_packer,
+        target_voxels_per_sv=task["target_voxels_per_sv"],
+        min_voxels_per_sv=task["min_voxels_per_sv"],
+        edge_sigma=task["edge_sigma"],
+        enable_force_dicing=False,
+    )
+
+    # Write supervoxels to output channel (write region only, no halo)
+    output_cv = CloudVolume(
+        task["output_channel"],
+        cache=False,
+        mip=cast(Any, task["mip"]),
+    )
+
+    output_cv[ax:ax + arx, ay:ay + ary, az:az + arz] = sv_chunk
+
+    # Aggregate metadata (chunk index is already provided in the task)
+    return {
+        "num_sv": metadata["num_sv"],
+        "parent_sv_ids": metadata["parent_sv_ids"],
+        "sv_sizes": metadata["sv_sizes"],
+        "chunk_index": tuple(task["chunk_index_xyz"]),
+    }
+    # except Exception as e:
+    #     print(f"[ERROR]\t[supervoxel] {e}")
+    #     return {}
+
+
 def process_queue_job(event, context):
     # event_records = json.loads(event['Records'][0]['body'])
     for record in event["Records"]:
         payload = json.loads(record["body"])
         # Uses "contactome" as the default task_type for back-compat.
         if (
+            "cuboid_start" in payload
+            and payload.get("task_type", "contactome") == "supervoxel"
+        ):
+            # Supervoxel task
+            payload = SupervoxelTaskPayload(**payload)
+            graph_id = payload.pop("graph_id")
+            chunk_index = payload["chunk_index_xyz"]
+            results = return_supervoxel_results(payload)
+            # Save results to dynamodb
+            if results:
+                # Encode parent->sv ids mapping as pid:gid1|gid2,... per parent, comma-separated parents
+                parent_map = results.get("parent_sv_ids", {})
+                parent_counts_str = ",".join(
+                    f"{pid}:{'|'.join(str(int(g)) for g in gids)}" for pid, gids in parent_map.items()
+                )
+                SupervoxelResultsModel(
+                    graph_id=graph_id,
+                    synapse_id=f"sv_x{chunk_index[0]}_y{chunk_index[1]}_z{chunk_index[2]}_n{results['num_sv']}_p{parent_counts_str}",
+                ).save()
+        elif (
             "cuboid_start" in payload
             and payload.get("task_type", "contactome") == "contactome"
         ):

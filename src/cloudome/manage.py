@@ -18,12 +18,15 @@ from .database import (
     VolumeTaskPayload,
 )
 from .shared_cuboid_utils import generate_cuboidwise_tasks
+from .shared_supervoxel_utils import generate_supervoxel_tasks
 from .shared_utils import (
     _attach_contactome_parser,
     _attach_global_arguments,
     _attach_synapse_parser,
+    _attach_supervoxel_parser,
     _attach_volume_parser,
     _parse_mip_argument,
+    _parse_xyz_argument,
 )
 from .shared_synapse_utils import (
     export_synapse_mask_centroids_to_file,
@@ -96,6 +99,49 @@ def local_dequeue(sqs_url: str):
         for message in response["Messages"]:
             cloudome_app.process_queue_job({"Records": [message]}, None)
             sqs.delete_message(QueueUrl=sqs_url, ReceiptHandle=message["ReceiptHandle"])
+
+
+def generate_supervoxel_tasks_for_queue(
+    sqs_url: str,
+    graph_id: str,
+    segmentation_channel: str,
+    output_channel: str,
+    raw_channel: str | None,
+    mip: list | int,
+    target_voxels_per_sv: int = 25000,
+    min_voxels_per_sv: int = 2000,
+    halo: int = 8,
+    edge_sigma: float = 1.5,
+    chunk_xyz: tuple[int, int, int] = (128, 128, 128),
+    z_start: int | None = None,
+    z_end: int | None = None,
+    bbox_min_xyz: tuple[int, int, int] | None = None,
+    bbox_max_xyz: tuple[int, int, int] | None = None,
+    enqueue_limit: int | None = None,
+):
+    """
+    Generate and enqueue supervoxel tasks to SQS.
+    """
+    for payload in tqdm(
+        generate_supervoxel_tasks(
+            graph_id=graph_id,
+            segmentation_channel=segmentation_channel,
+            output_channel=output_channel,
+            raw_channel=raw_channel,
+            mip=mip,
+            target_voxels_per_sv=target_voxels_per_sv,
+            min_voxels_per_sv=min_voxels_per_sv,
+            halo=halo,
+            edge_sigma=edge_sigma,
+            chunk_xyz=chunk_xyz,
+            z_start=z_start,
+            z_end=z_end,
+            bbox_min_xyz=bbox_min_xyz,
+            bbox_max_xyz=bbox_max_xyz,
+            enqueue_limit=enqueue_limit,
+        )
+    ):
+        sqs.send_message(QueueUrl=sqs_url, MessageBody=json.dumps(payload))
 
 
 def initialize_resources():
@@ -294,6 +340,9 @@ def parse_arguments():
         help="Output file path for simplified volume data",
     )
 
+    # Namespace: supervoxel
+    _attach_supervoxel_parser(subparsers)
+
     # Namespace: export
     export_parser = subparsers.add_parser("export", help="Export results to CSV")
     export_parser.add_argument(
@@ -383,6 +432,27 @@ def main():
                 open(args.output_file, "w") as outfile,
             ):
                 simplify_volume_data(instream=infile, outstream=outfile)
+    elif args.namespace == "supervoxel":
+        if args.command == "generate":
+            chunk_xyz = (args.chunk_size_x, args.chunk_size_y, args.chunk_size_z)
+            generate_supervoxel_tasks_for_queue(
+                sqs_url=args.queue_url,
+                graph_id=args.graph_id,
+                segmentation_channel=args.segmentation_channel,
+                output_channel=args.output_channel,
+                raw_channel=args.raw_channel,
+                mip=mip,
+                target_voxels_per_sv=args.target_voxels_per_sv,
+                min_voxels_per_sv=args.min_voxels_per_sv,
+                halo=args.halo,
+                edge_sigma=args.edge_sigma,
+                chunk_xyz=chunk_xyz,
+                z_start=args.z_start,
+                z_end=args.z_end,
+                bbox_min_xyz=_parse_xyz_argument(args.bbox_min_xyz),
+                bbox_max_xyz=_parse_xyz_argument(args.bbox_max_xyz),
+                enqueue_limit=args.enqueue_limit,
+            )
     elif args.namespace == "export":
         export_dynamodb_results_to_csv(args.graph_id, args.output_file)
     elif args.namespace == "initialize":

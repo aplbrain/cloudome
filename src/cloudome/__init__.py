@@ -6,6 +6,7 @@ __all__ = [
     "process_queue_job",
     "return_ctc_edges",
     "return_seg_edge",
+    "return_supervoxel_results",
     "return_volume_counts",
 ]
 
