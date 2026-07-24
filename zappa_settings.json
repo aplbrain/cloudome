@@ -1,0 +1,35 @@
+{
+    "dev": {
+        "app_function": "cloudome.app",
+        "exclude": [
+            "boto3",
+            "dateutil",
+            "botocore",
+            "s3transfer",
+            "concurrent",
+            "intern",
+            "ipykernel",
+            "matplotlib"
+        ],
+        "exclude_glob": ["**/__pycache__/*"],
+        "profile_name": "default",
+        "slim_handler": true,
+        "project_name": "cloudome",
+        "aws_region": "us-east-1",
+        "runtime": "python3.11",
+        "s3_bucket": "zappa-cloudome-function",
+        "events": [
+            {
+                "function": "cloudome.process_queue_job",
+                "event_source": {
+                    "arn": "<your-sqs-ARN-here>",
+                    "batch_size": 10,
+                    "enabled": true
+                }
+            }
+        ],
+        "timeout_seconds": 900,
+        "memory_size": 2000
+	"environment_variables": {"CLOUD_VOLUME_DIR": "/tmp/.cloudvolume" }
+    }
+}
