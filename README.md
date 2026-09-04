@@ -37,6 +37,8 @@ The following explanatory figure is published in [Connectome quality converges p
 
 For questions or collaboration inquiries, please email hannah.martinez@jhuapl.edu or jordan.matelsky@jhuapl.edu.
 
+Please cite [Connectome quality converges predictably to reveal optimal stopping points during proofreading](https://doi.org/10.64898/2026.06.30.735414) if this codebase is helpful to your research.
+
 This software was created by the Johns Hopkins University Applied Physics Laboratory, with funding supported by the NIH BRAIN Initiative under grant no. R24MH114785.
 
 The views, opinions, and/or findings expressed are those of the author(s) and should not be interpreted as representing the official views or policies of the NIH.
