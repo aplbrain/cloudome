@@ -14,6 +14,7 @@ Provision the queue with one job per chunk of data:
 uv run local_manage.py \
   --sqlite-db-path test.db
   --mip 4,4,40 \
+  --queue-url fq://q-CloudomeTasks \
   contactome generate \
   --graph-id test \
   --segmentation-channel s3://path/to/segmentation \
@@ -23,10 +24,13 @@ uv run local_manage.py \
 Parameters:  
 **--sqlite-db-path**: The filename of the database which Cloudome will write to.  
 **--mip**: Indicates the resolution at which to compute the contactome. We recommend using a downsampled version of segmentation so that runtime is quicker. Downsampling with max-pooling will ensure that segmentation labels are preserved. This will especially be necessary when segmentation does not cover membranes, as downsampling with max-pooling will cause the segmentation labels to crowd out the 0-labeled membranes and produce more contacts.  
+**--queue-url**: The disk location to which tasks should be queued.
 **--graph-id**: A column in the database that will differentiate runs, so that the same database can be used for multiple runs.  
 **--segmentation-channe**l: The path to the segmentation that will be used in the computation. Any protocol supported by CloudVolume is supported (e.g. s3://, gs://, https://, file://, etc)  
 **--block-size-&lt;dim&gt;**: These three parameters determine the chunk size of one job. This size should always be multiples of the dataset's chunk size. For best performance, choose a maximal chunk size that can fit into the amount of memory allocated to a single job.  
 **--z-start**, **--z-stop**: Optionally limit the Z bounds of the computation.
+
+To clear out stale tasks, run `rm -rf ./q-Cloudome-Tasks` to delete the queue, replacing with your custom location if using the `--queue-url` parameter. We recommend doing this anytime tasks are provisioned incorrectly, to ensure that the incorrect tasks are not executed.
   
 ### Volume
 
